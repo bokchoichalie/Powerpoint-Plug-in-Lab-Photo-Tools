@@ -1,0 +1,4 @@
+# Python 3.12 x64. Install into the add-in's private virtual environment.
+Pillow==12.3.0
+rembg[cpu]==2.0.67
+
