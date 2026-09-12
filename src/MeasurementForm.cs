@@ -15,9 +15,9 @@ namespace LabPhotoTools
         private readonly MeasurementSession session;
         internal readonly MeasurementCanvas Canvas=new MeasurementCanvas();
         private readonly MeasurementMagnifier magnifier=new MeasurementMagnifier();
-        private readonly TableLayoutPanel body=new TableLayoutPanel {Dock=DockStyle.Fill,Margin=Padding.Empty};
+        private readonly TableLayoutPanel sidebar=new TableLayoutPanel {Dock=DockStyle.Fill,Margin=Padding.Empty,ColumnCount=1,RowCount=2};
         private readonly Panel settingsViewport=new Panel {Dock=DockStyle.Fill,AutoScroll=true,Margin=Padding.Empty};
-        private readonly TableLayoutPanel settings=new TableLayoutPanel {Dock=DockStyle.Top,AutoSize=true,ColumnCount=1,Margin=Padding.Empty,Padding=new Padding(8)};
+        private readonly TableLayoutPanel settings=new TableLayoutPanel {ColumnCount=1,Margin=Padding.Empty,Padding=new Padding(8)};
         private readonly Label status=new Label {AutoSize=true,Dock=DockStyle.Fill,Margin=new Padding(6),Text="사진의 스케일바 양 끝을 지정해 주세요."};
         private readonly Label scaleStatus=new Label {AutoSize=true,Dock=DockStyle.Top,Margin=new Padding(4)};
         private readonly NumericUpDown actual=new NumericUpDown {DecimalPlaces=6,Minimum=.000001m,Maximum=1000000000,Value=100,Width=140};
@@ -31,12 +31,15 @@ namespace LabPhotoTools
         private readonly ToolTip tips=new ToolTip();
         private MeasurementItem pendingCalibration;
         private bool reflowing,refreshing;
+        private bool footerInScroll;
         private readonly Button apply;
         private readonly List<Image> buttonImages=new List<Image>();
         private Label navigationHint;
-        private readonly Panel windowViewport=new Panel {Dock=DockStyle.Fill,AutoScroll=true};
+        private FlowLayoutPanel footer;
+        private FlowLayoutPanel calibrationTools;
+        private readonly Panel windowViewport=new Panel {Dock=DockStyle.Fill};
         private TableLayoutPanel root;
-        private readonly TableLayoutPanel calibrationBand=new TableLayoutPanel {Dock=DockStyle.Fill,ColumnCount=3,RowCount=1,Margin=Padding.Empty};
+        private readonly TableLayoutPanel calibrationBand=new TableLayoutPanel {Dock=DockStyle.Top,ColumnCount=2,RowCount=1,Margin=Padding.Empty};
         private readonly TableLayoutPanel calibrationValues=new TableLayoutPanel {Dock=DockStyle.Top,ColumnCount=1,Margin=Padding.Empty};
         public MeasurementForm(PowerPointHost host,SelectionSnapshot selection) : this(host,selection,host.CreateMeasurementSession(selection)) { }
         internal MeasurementForm(PowerPointHost host,SelectionSnapshot selection,MeasurementSession session)
@@ -44,24 +47,26 @@ namespace LabPhotoTools
             this.host=host;this.selection=selection;this.session=session;
             Text="Lab Photo Tools · 치수측정";Font=new Font("맑은 고딕",9.5f);AutoScaleDimensions=new SizeF(96,96);AutoScaleMode=AutoScaleMode.Dpi;
             StartPosition=FormStartPosition.CenterParent;ClientSize=new Size(1280,830);MinimumSize=new Size(380,340);BackColor=Color.FromArgb(248,249,251);MinimizeBox=false;MaximizeBox=false;FormBorderStyle=FormBorderStyle.FixedDialog;
-            root=new TableLayoutPanel {Dock=DockStyle.None,ColumnCount=1,RowCount=5,Padding=new Padding(10),Margin=Padding.Empty};
-            root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));root.RowStyles.Add(new RowStyle(SizeType.AutoSize));root.RowStyles.Add(new RowStyle(SizeType.AutoSize));root.RowStyles.Add(new RowStyle(SizeType.Percent,100));root.RowStyles.Add(new RowStyle(SizeType.AutoSize));root.RowStyles.Add(new RowStyle(SizeType.AutoSize));Controls.Add(windowViewport);windowViewport.Controls.Add(root);
+            root=new TableLayoutPanel {Dock=DockStyle.Fill,ColumnCount=2,RowCount=1,Padding=new Padding(8),Margin=Padding.Empty};
+            root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));root.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute,500));root.RowStyles.Add(new RowStyle(SizeType.Percent,100));Controls.Add(windowViewport);windowViewport.Controls.Add(root);
+            Canvas.Margin=new Padding(0,0,8,0);root.Controls.Add(Canvas,0,0);root.Controls.Add(sidebar,1,0);
+            sidebar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));sidebar.RowStyles.Add(new RowStyle(SizeType.Percent,100));sidebar.RowStyles.Add(new RowStyle(SizeType.AutoSize));sidebar.Controls.Add(settingsViewport,0,0);
+            settingsViewport.Controls.Add(settings);settings.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));
             FlowLayoutPanel top=Flow();top.Controls.Add(Label("치수측정",true));
-            top.Controls.Add(Button("전체 보기",delegate{Canvas.ResetView();}));top.Controls.Add(Button("확대 +",delegate{Canvas.Zoom(1.25);}));top.Controls.Add(Button("축소 −",delegate{Canvas.Zoom(.8);}));
-            navigationHint=Label("휠: 확대 · 가운데 버튼: 이동 · WASD/방향키: 1 px · Enter: 점 확정",false);top.Controls.Add(navigationHint);
-            root.Controls.Add(top,0,0);root.Controls.Add(calibrationBand,0,1);root.Controls.Add(body,0,2);root.Controls.Add(status,0,3);
-            body.Controls.Add(Canvas,0,0);body.Controls.Add(settingsViewport,1,0);settingsViewport.Controls.Add(settings);settings.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));
+            top.Controls.Add(Button("전체 보기",delegate{Canvas.ResetView();Canvas.Focus();}));top.Controls.Add(Button("확대 +",delegate{Canvas.Zoom(1.25);Canvas.Focus();}));top.Controls.Add(Button("축소 −",delegate{Canvas.Zoom(.8);Canvas.Focus();}));Add(top);
+            navigationHint=Label("휠: 확대 · 가운데 버튼: 이동\nWASD/방향키: 1 px · Shift: 10 px · Enter: 점 확정",false);navigationHint.Dock=DockStyle.Top;Add(navigationHint);
             Canvas.Document=session.Document;Canvas.Source=session.Image;Canvas.Rotation=session.Rotation;magnifier.Source=session.Image;magnifier.Document=session.Document;magnifier.Rotation=session.Rotation;magnifier.Point=new MeasurePoint(session.Document.Width/2,session.Document.Height/2);
             BuildSettings();
             if(Canvas.Document.CalibrationLengthMicrons>0)actual.Value=Math.Max(actual.Minimum,Math.Min(actual.Maximum,(decimal)(Canvas.Document.CalibrationLengthMicrons/MeasurementGeometry.UnitFactor(Canvas.Document.Unit))));
-            FlowLayoutPanel footer=Flow();footer.FlowDirection=FlowDirection.RightToLeft;
+            Add(status);footer=Flow();footer.FlowDirection=FlowDirection.RightToLeft;
             apply=Button("측정 사진 복사",Apply);apply.BackColor=Color.FromArgb(25,98,180);apply.ForeColor=Color.White;
-            footer.Controls.Add(apply);footer.Controls.Add(Button("닫기",delegate{Close();}));footer.Controls.Add(Button("CSV 저장",Export));root.Controls.Add(footer,0,4);
+            footer.Controls.Add(apply);footer.Controls.Add(Button("닫기",delegate{Close();}));footer.Controls.Add(Button("CSV 저장",Export));sidebar.Controls.Add(footer,0,1);
             Canvas.CalibrationReady+=delegate(MeasurementItem item){pendingCalibration=item;scaleStatus.Text="기준 "+MeasurementGeometry.ReferenceLength(item).ToString("0.###")+" px · 실제 길이를 입력하고 스케일 적용";status.Text="선택한 기준의 실제 길이를 입력하고 ‘스케일 적용’을 누르세요.";};
             Canvas.Changed+=RefreshResults;Canvas.Status+=delegate(string text){status.Text=text;};
             Canvas.HoverChanged+=delegate(MeasurePoint p){magnifier.Point=p;magnifier.Invalidate();status.Text="커서 X "+(p.X*session.Image.Width/Canvas.Document.Width).ToString("0.##")+" / Y "+(p.Y*session.Image.Height/Canvas.Document.Height).ToString("0.##")+" px · WASD/방향키: 1 px · Shift: 10 px · Enter/클릭: 점 확정";};
-            body.SizeChanged+=delegate{Reflow();};Shown+=delegate{FitScreen();Reflow();Canvas.Focus();};
+            Shown+=delegate{FitScreen();Reflow();Canvas.Focus();};
             windowViewport.SizeChanged+=delegate{Reflow();};
+            ClientSizeChanged+=delegate{Reflow();};
             RefreshResults();Canvas.SetTool(Canvas.Document.HasScale?"select":"line",!Canvas.Document.HasScale);
             if(Canvas.Document.HasScale)status.Text="저장된 스케일과 측정 도형을 불러왔습니다.";
             tips.SetToolTip(actual,"스케일바의 실제 길이. 평행선은 간격, 3점원은 지름입니다.");
@@ -74,13 +79,13 @@ namespace LabPhotoTools
         private void AddCalibration(Control control){int row=calibrationValues.Controls.Count;calibrationValues.RowStyles.Add(new RowStyle(SizeType.AutoSize));calibrationValues.Controls.Add(control,0,row);calibrationValues.RowCount=row+1;}
         private void BuildSettings()
         {
-            calibrationBand.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute,420));calibrationBand.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute,216));calibrationBand.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));calibrationBand.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            calibrationBand.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));calibrationBand.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute,168));calibrationBand.RowStyles.Add(new RowStyle(SizeType.Percent,100));Add(calibrationBand);
             calibrationValues.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));calibrationBand.Controls.Add(calibrationValues,0,0);
-            magnifier.Name="MeasurementMagnifier";magnifier.Size=new Size(208,156);magnifier.Margin=new Padding(4,8,4,8);magnifier.Anchor=AnchorStyles.Top|AnchorStyles.Left;calibrationBand.Controls.Add(magnifier,1,0);
-            AddCalibration(Label("1. 수동 스케일",true));FlowLayoutPanel calibration=Flow();
+            magnifier.Name="MeasurementMagnifier";magnifier.Size=new Size(160,120);magnifier.Margin=new Padding(4,8,4,8);magnifier.Anchor=AnchorStyles.Top|AnchorStyles.Left;calibrationBand.Controls.Add(magnifier,1,0);
+            AddCalibration(Label("1. 수동 스케일",true));calibrationTools=Flow();
             foreach(string kind in new[]{"line","gap","circle3"})
-            {string k=kind;Button b=Button(k=="line"?"선":k=="gap"?"평행선":"3점원",delegate{ChooseTool(k,true);});SetImage(b,k);calibration.Controls.Add(b);}
-            AddCalibration(calibration);FlowLayoutPanel scaleRow=Flow();scaleRow.Controls.Add(Label("실제 길이",false));actual.AccessibleName="스케일 실제 길이";units.AccessibleName="스케일 단위";scaleRow.Controls.Add(actual);units.Items.AddRange(new object[]{"nm","µm","mm","cm"});units.SelectedItem=Canvas.Document.Unit;scaleRow.Controls.Add(units);AddCalibration(scaleRow);
+            {string k=kind;Button b=Button(k=="line"?"선":k=="gap"?"평행선":"3점원",delegate{ChooseTool(k,true);});SetImage(b,k);calibrationTools.Controls.Add(b);}
+            AddCalibration(calibrationTools);AddCalibration(Label("실제 길이",false));FlowLayoutPanel scaleRow=Flow();actual.AccessibleName="스케일 실제 길이";units.AccessibleName="스케일 단위";scaleRow.Controls.Add(actual);units.Items.AddRange(new object[]{"nm","µm","mm","cm"});units.SelectedItem=Canvas.Document.Unit;scaleRow.Controls.Add(units);AddCalibration(scaleRow);
             FlowLayoutPanel scaleActions=Flow();scaleActions.Controls.Add(Button("스케일 적용",ApplyScale));scaleActions.Controls.Add(Button("표시 단위 변경",delegate{Canvas.PushUndo();Canvas.Document.Unit=(string)units.SelectedItem;RefreshResults();}));AddCalibration(scaleActions);AddCalibration(scaleStatus);
             Add(Label("2. 측정 도구",true));FlowLayoutPanel tools=Flow();
             foreach(KeyValuePair<string,string> pair in MeasurementGeometry.Names)
@@ -169,26 +174,37 @@ namespace LabPhotoTools
             if(reflowing)return;reflowing=true;
             try
             {
-                float scale=Math.Max(Font.SizeInPoints/9.5f,DeviceDpi/96f);bool wide=windowViewport.ClientSize.Width>=900*scale;
-                // If Windows text scaling leaves too little physical space,
-                // retain a usable layout and make the whole window scrollable.
-                int height=Math.Max(windowViewport.ClientSize.Height-1,(int)(650*scale));
-                int width=Math.Max(windowViewport.ClientSize.Width-1,(int)(660*scale));
-                root.Bounds=new Rectangle(windowViewport.AutoScrollPosition.X,windowViewport.AutoScrollPosition.Y,width,height);
-                navigationHint.Visible=width>=1100*scale;
+                float scale;
+                using(Graphics g=CreateGraphics())using(Font baseline=new Font("맑은 고딕",9.5f))
+                    scale=Math.Max(DeviceDpi/96f,Font.GetHeight(g)/baseline.GetHeight(96));
                 actual.Width=TextRenderer.MeasureText("1000000000.000000",actual.Font).Width+(int)(32*scale);units.Width=Math.Max((int)(78*scale),TextRenderer.MeasureText("mm",units.Font).Width+(int)(36*scale));
-                calibrationBand.ColumnStyles[0].Width=420*scale;calibrationBand.ColumnStyles[1].Width=216*scale;
-                int loupeWidth=(int)(208*scale)/4*4;magnifier.Size=new Size(loupeWidth,loupeWidth*3/4);scaleStatus.MaximumSize=new Size((int)(404*scale),0);
-                // TableLayout's unconstrained preferred width can wrap the
-                // status label into many lines. Measure at the actual column
-                // width so the photo receives all remaining screen height.
-                int calibrationHeight=calibrationValues.Controls.Cast<Control>().Sum(c=>c.GetPreferredSize(new Size((int)(420*scale)-c.Margin.Horizontal,0)).Height+c.Margin.Vertical);
-                calibrationValues.Height=calibrationHeight;root.RowStyles[1].SizeType=SizeType.Absolute;root.RowStyles[1].Height=Math.Max(calibrationHeight,magnifier.Height+magnifier.Margin.Vertical);
-                body.SuspendLayout();body.ColumnStyles.Clear();body.RowStyles.Clear();body.ColumnCount=wide?2:1;body.RowCount=wide?1:2;
-                body.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,wide?67:100));if(wide)body.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,33));
-                body.RowStyles.Add(new RowStyle(SizeType.Percent,wide?100:65));if(!wide)body.RowStyles.Add(new RowStyle(SizeType.Percent,35));
-                body.SetCellPosition(Canvas,new TableLayoutPanelCellPosition(0,0));body.SetCellPosition(settingsViewport,new TableLayoutPanelCellPosition(wide?1:0,wide?0:1));
-                settings.MinimumSize=new Size((int)(310*scale),0);body.ResumeLayout(true);status.MaximumSize=new Size(Math.Max(100,width-40),0);root.PerformLayout();
+                int loupeWidth=Math.Max(4,(int)(160*scale)/4*4);magnifier.Size=new Size(loupeWidth,loupeWidth*3/4);
+                int valuesWidth=Math.Max(actual.Width+actual.Margin.Horizontal+units.Width+units.Margin.Horizontal,
+                    calibrationTools.Controls.Cast<Control>().Sum(c=>c.PreferredSize.Width+c.Margin.Horizontal));
+                valuesWidth+=8;int minimumWidth=valuesWidth+loupeWidth+magnifier.Margin.Horizontal+settings.Padding.Horizontal;
+                // Only the sidebar scrolls, even on a small display. The image
+                // keeps the entire available height and never moves below panels.
+                int available=Math.Max(1,root.ClientSize.Width-root.Padding.Horizontal);
+                int desired=Math.Max(minimumWidth+SystemInformation.VerticalScrollBarWidth,(int)Math.Min(available*.30,600*scale));
+                int right=Math.Min(desired,(int)(available*.48));root.ColumnStyles[1].Width=Math.Max(1,right);
+                foreach(Button b in footer.Controls.OfType<Button>())b.MaximumSize=new Size(Math.Max(60,right-b.Margin.Horizontal),0);
+                bool scrollFooter=footer.GetPreferredSize(new Size(Math.Max(1,right),0)).Height>Math.Max(80,(root.ClientSize.Height-root.Padding.Vertical)*.35);
+                if(scrollFooter!=footerInScroll)
+                {
+                    if(scrollFooter)Add(footer);
+                    else {settings.Controls.Remove(footer);settings.RowStyles.RemoveAt(settings.RowStyles.Count-1);settings.RowCount=settings.Controls.Count;sidebar.Controls.Add(footer,0,1);}
+                    footerInScroll=scrollFooter;
+                }
+                int contentWidth=Math.Max(minimumWidth,settingsViewport.ClientSize.Width-1);
+                settings.Width=contentWidth;
+                int bandWidth=contentWidth-settings.Padding.Horizontal;
+                calibrationBand.ColumnStyles[1].Width=loupeWidth+magnifier.Margin.Horizontal;
+                int columnWidth=bandWidth-loupeWidth-magnifier.Margin.Horizontal;scaleStatus.MaximumSize=new Size(Math.Max(1,columnWidth-scaleStatus.Margin.Horizontal),0);
+                int calibrationHeight=calibrationValues.Controls.Cast<Control>().Sum(c=>c.GetPreferredSize(new Size(Math.Max(1,columnWidth-c.Margin.Horizontal),0)).Height+c.Margin.Vertical);
+                calibrationValues.Height=calibrationHeight;calibrationBand.Height=Math.Max(calibrationHeight,magnifier.Height+magnifier.Margin.Vertical);
+                int textWidth=Math.Max(1,bandWidth-12);status.MaximumSize=new Size(textWidth,0);navigationHint.MaximumSize=new Size(textWidth,0);
+                int contentHeight=settings.Padding.Vertical+settings.Controls.Cast<Control>().Sum(c=>(c.AutoSize?c.GetPreferredSize(new Size(Math.Max(1,bandWidth-c.Margin.Horizontal),0)).Height:c.Height)+c.Margin.Vertical);
+                settings.Bounds=new Rectangle(settingsViewport.AutoScrollPosition,new Size(contentWidth,contentHeight));settingsViewport.AutoScrollMinSize=new Size(contentWidth,contentHeight);root.PerformLayout();
             }
             finally{reflowing=false;}
         }

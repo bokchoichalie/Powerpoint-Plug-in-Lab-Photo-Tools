@@ -23,9 +23,9 @@ internal static class MeasurementTests
         Add(d,Item("line",120,120,380,160));Add(d,Item("circle",650,230,735,230));Add(d,Item("rect",120,350,370,580));
         Add(d,Item("angle",780,510,890,590,1020,480));Add(d,Item("ellipse",550,470,780,550,620,590));return d;
     }
-    private static Bitmap TestImage()
+    private static Bitmap TestImage(int height=800)
     {
-        Bitmap image=new Bitmap(1200,800);using(Graphics g=Graphics.FromImage(image))
+        Bitmap image=new Bitmap(1200,height);using(Graphics g=Graphics.FromImage(image))
         {
             g.Clear(Color.FromArgb(54,58,64));using(Brush b=new SolidBrush(Color.FromArgb(172,177,183)))
             {g.FillEllipse(b,60,50,370,205);g.FillEllipse(b,555,135,190,190);g.FillRectangle(b,110,340,270,245);g.FillEllipse(b,530,400,340,240);}
@@ -37,6 +37,7 @@ internal static class MeasurementTests
     {
         try
         {
+            Application.SetUnhandledExceptionMode(UnhandledExceptionMode.ThrowException);
             Directory.CreateDirectory(args[0]);Geometry();Application.EnableVisualStyles();CanvasAndDialog(args[0]);
             if(args.Contains("--powerpoint"))Integration(args[0]);
             Console.WriteLine("PASS: "+checks+" measurement assertions.");return 0;
@@ -77,6 +78,8 @@ internal static class MeasurementTests
         Check(xml.SelectSingleNode("//r:tab[@id='labMeasurementTab']",ns)==null,"no separate measurement tab");
     }
     private static IEnumerable<Control> Children(Control root){foreach(Control c in root.Controls){yield return c;foreach(Control child in Children(c))yield return child;}}
+    private static void Reveal(Control child)
+    {for(Control p=child.Parent;p!=null;p=p.Parent){ScrollableControl viewport=p as ScrollableControl;if(viewport!=null&&viewport.AutoScroll)viewport.ScrollControlIntoView(child);}Application.DoEvents();}
     private static void Input(Control c,string method,EventArgs args)
     {c.GetType().GetMethod(method,BindingFlags.Instance|BindingFlags.NonPublic).Invoke(c,new object[]{args});}
     private static void PrecisionKeys()
@@ -89,7 +92,7 @@ internal static class MeasurementTests
             Input(c,"OnMouseMove",new MouseEventArgs(MouseButtons.None,0,start.X,start.Y,0));MeasurePoint initial=c.HoverPoint;
             foreach(Keys key in new[]{Keys.D,Keys.S,Keys.A,Keys.W})
             {
-                MeasurePoint old=c.HoverPoint;Input(c,"OnKeyDown",new KeyEventArgs(key));Application.DoEvents();
+                MeasurePoint old=c.HoverPoint;Input(c,"OnKeyDown",new KeyEventArgs(key));
                 Near(c.HoverPoint.X-old.X,key==Keys.D?2:key==Keys.A?-2:0,"WASD loaded pixel X "+key);
                 Near(c.HoverPoint.Y-old.Y,key==Keys.S?2:key==Keys.W?-2:0,"WASD loaded pixel Y "+key);
                 Point cursor=c.PointToClient(Cursor.Position);Check(cursor==Point.Round(c.ToScreen(c.HoverPoint)),"native cursor follows "+key);
@@ -107,6 +110,7 @@ internal static class MeasurementTests
     }
     private static void CanvasAndDialog(string output)
     {
+        Console.WriteLine("Precision input");
         PrecisionKeys();
         using(MeasurementCanvas canvas=new MeasurementCanvas())
         {
@@ -120,6 +124,7 @@ internal static class MeasurementTests
         }
         using(MeasurementForm form=new MeasurementForm(new PowerPointHost(new object()),new SelectionSnapshot(),new MeasurementSession {Image=TestImage(),Document=Demo()}))
         {
+            Console.WriteLine("Base layout");
             form.Show();Application.DoEvents();Rectangle work=Screen.FromHandle(form.Handle).WorkingArea;Check(work.Contains(form.Bounds)&&form.Width>=work.Width*.94&&form.Height>=work.Height*.94,"dialog fills monitor work area");
             Check(form.Canvas.Focused,"measurement keys ready when dialog opens");form.ClientSize=new Size(1280,830);Application.DoEvents();
             Check(form.FormBorderStyle==FormBorderStyle.FixedDialog&&!form.MaximizeBox,"fixed dialog border");
@@ -130,7 +135,11 @@ internal static class MeasurementTests
                 foreach(TableLayoutPanel panel in Children(form).OfType<TableLayoutPanel>())
                 {var children=panel.Controls.Cast<Control>().Where(c=>c.Visible).ToList();for(int i=0;i<children.Count;i++)for(int j=i+1;j<children.Count;j++)Check(!children[i].Bounds.IntersectsWith(children[j].Bounds),"dialog overlaps at "+size+" "+children[i].Text+" / "+children[j].Text);}
                 Check(form.Canvas.Width>120&&form.Canvas.Height>80,"canvas visible at "+size+": "+form.Canvas.Size+" body="+form.Canvas.Parent.Size);
-                Button apply=Children(form).OfType<Button>().Single(b=>b.Text=="측정 사진 복사");((Panel)form.Controls[0]).ScrollControlIntoView(apply);Application.DoEvents();Rectangle bnd=form.RectangleToClient(apply.RectangleToScreen(apply.ClientRectangle));Check(form.ClientRectangle.Contains(bnd),"apply accessible "+size+" bounds="+bnd+" root="+form.Controls[0].Controls[0].Bounds);
+                Check(form.Canvas.Top<=16&&form.Canvas.Height>=form.ClientSize.Height-40,"photo uses full window height "+size);
+                Rectangle imageBounds=form.Canvas.RectangleToScreen(form.Canvas.ClientRectangle);
+                foreach(Control button in Children(form).OfType<Button>())
+                {Rectangle bounds=button.RectangleToScreen(button.ClientRectangle);for(Control p=button.Parent;p!=form;p=p.Parent)bounds=Rectangle.Intersect(bounds,p.RectangleToScreen(p.ClientRectangle));if(!bounds.IsEmpty)Check(bounds.Left>=imageBounds.Right,"all buttons to the right "+button.Text+" at "+size);}
+                Button apply=Children(form).OfType<Button>().Single(b=>b.Text=="측정 사진 복사");Reveal(apply);Rectangle bnd=form.RectangleToClient(apply.RectangleToScreen(apply.ClientRectangle));Check(form.ClientRectangle.Contains(bnd),"apply accessible "+size+" bounds="+bnd+" root="+form.Controls[0].Controls[0].Bounds);
                 Control loupe=Children(form).Single(c=>c.Name=="MeasurementMagnifier");Near((double)loupe.Width/loupe.Height,4.0/3,"4:3 magnifier");
                 Control unit=Children(form).Single(c=>c.AccessibleName=="스케일 단위");Check(unit.Right<=unit.Parent.ClientSize.Width&&unit.Bottom<=unit.Parent.ClientSize.Height,"scale unit not clipped");Check(loupe.PointToScreen(Point.Empty).X>unit.PointToScreen(Point.Empty).X+unit.Width,"magnifier right of scale values");
             }
@@ -139,6 +148,7 @@ internal static class MeasurementTests
         foreach(float scale in new[]{1.25f,1.5f,2f,3f})
         using(MeasurementForm form=new MeasurementForm(new PowerPointHost(new object()),new SelectionSnapshot(),new MeasurementSession {Image=TestImage(),Document=Demo()}))
         {
+            Console.WriteLine("DPI layout "+scale);
             form.Show();Application.DoEvents();form.AutoScaleMode=AutoScaleMode.None;form.Scale(new SizeF(scale,scale));form.Font=new Font("맑은 고딕",9.5f*scale);
             foreach(Control child in Children(form))child.Font=new Font(child.Font.FontFamily,9.5f*scale,child.Font.Style);
             foreach(Size size in new[]{new Size(780,520),new Size(1340,700),new Size(1900,1000)})
@@ -147,12 +157,24 @@ internal static class MeasurementTests
                 foreach(TableLayoutPanel panel in Children(form).OfType<TableLayoutPanel>())
                 {var controls=panel.Controls.Cast<Control>().Where(c=>c.Visible).ToList();for(int i=0;i<controls.Count;i++)for(int j=i+1;j<controls.Count;j++)Check(!controls[i].Bounds.IntersectsWith(controls[j].Bounds),"DPI overlap "+scale+" at "+size+" "+controls[i].GetType().Name+" "+controls[i].Text+" "+controls[i].Bounds+" / "+controls[j].GetType().Name+" "+controls[j].Text+" "+controls[j].Bounds);}
                 Button apply=Children(form).OfType<Button>().Single(b=>b.Text=="측정 사진 복사");
-                ((Panel)form.Controls[0]).ScrollControlIntoView(apply);Application.DoEvents();
+                Reveal(apply);
                 Check(form.ClientRectangle.Contains(form.RectangleToClient(apply.RectangleToScreen(apply.ClientRectangle))),"DPI apply reachable by scroll "+scale+" at "+size);
                 Check(form.Canvas.Height>=45,"DPI canvas remains visible "+scale+" at "+size);
+                Check(form.Canvas.Height>=form.ClientSize.Height-64*scale,"DPI image keeps full height "+scale+" at "+size+" canvas="+form.Canvas.Bounds+" parent="+form.Canvas.Parent.Bounds+" viewport="+form.Controls[0].Bounds);
+                Check(!((Panel)form.Controls[0]).AutoScroll,"only sidebar scrolls "+scale);
                 Control unit=Children(form).Single(c=>c.AccessibleName=="스케일 단위");Check(unit.Right<=unit.Parent.ClientSize.Width&&unit.Bottom<=unit.Parent.ClientSize.Height,"DPI scale unit not clipped "+scale);
                 Control loupe=Children(form).Single(c=>c.Name=="MeasurementMagnifier");Near((double)loupe.Width/loupe.Height,4.0/3,"DPI 4:3 magnifier");
             }
+            form.Close();
+        }
+        using(MeasurementForm form=new MeasurementForm(new PowerPointHost(new object()),new SelectionSnapshot(),new MeasurementSession {Image=TestImage(900),Document=new MeasurementDocument {Width=1200,Height=900}}))
+        {
+            form.Show();Application.DoEvents();
+            form.ClientSize=new Size(3650,1860);Application.DoEvents();
+            double width=1200*form.Canvas.ViewScale,height=900*form.Canvas.ViewScale;
+            File.WriteAllText(Path.Combine(output,"measurement-photo-size.txt"),"Client="+form.ClientSize+" Canvas="+form.Canvas.Size+" Photo="+width.ToString("0")+"x"+height.ToString("0")+" ComparedToScreenshot="+(width/1407).ToString("0.000")+"x width / "+(width*height/(1407*1055.0)).ToString("0.000")+"x area");
+            Check(width>1407*1.65&&height>1055*1.65,"4:3 photo at least 65% larger than supplied screenshot");
+            using(Bitmap shot=new Bitmap(form.Width,form.Height)){form.DrawToBitmap(shot,new Rectangle(Point.Empty,shot.Size));shot.Save(Path.Combine(output,"measurement-dialog-large-dpi.png"));}
             form.Close();
         }
     }
