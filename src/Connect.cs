@@ -12,7 +12,7 @@ namespace LabPhotoTools
     public partial class Connect : IDTExtensibility2, IRibbonExtensibility
     {
         private object application;
-        private ToolForm currentForm;
+        private Form currentForm;
         public void OnConnection(object app, int mode, object instance, ref Array custom) { application = app; }
         public void OnDisconnection(int mode, ref Array custom) { if (currentForm != null) currentForm.Close(); ribbonUI = null; application = null; }
         public void OnAddInsUpdate(ref Array custom) { }
@@ -67,7 +67,13 @@ namespace LabPhotoTools
                   </box>
                 </box></group><group id='labPhotoHelpGroup' label='도움말'>
                 <button id='labPhotoHelp' label='사용 안내' imageMso='Help' onAction='OpenHelp'/>
-                </group></tab></tabs></ribbon></customUI>");
+                </group></tab>
+                <tab id='labMeasurementTab' label='치수측정'>
+                  <group id='labMeasurementGroup' label='사진 치수측정'>
+                    <button id='labPhotoMeasure' label='치수측정' size='large' getImage='GetIcon' onAction='OpenMeasurement' screentip='스케일바로 보정하고 사진의 치수 측정' supertip='사진 한 장을 선택하세요. 수동 선·평행선·3점원으로 스케일을 보정하고 거리·각도·면적을 측정합니다. 결과는 복제 슬라이드에 사진과 묶어 저장합니다.'/>
+                    <button id='labMeasurementReset' label='측정 초기화' imageMso='ResetPicture' onAction='ResetMeasurement' supertip='복제 슬라이드에서 선택한 사진의 측정 도형과 스케일을 초기화합니다.'/>
+                  </group>
+                </tab></tabs></ribbon></customUI>");
             return xml.ToString();
         }
 
@@ -76,6 +82,22 @@ namespace LabPhotoTools
         public void OpenBackground(object control) { ShowTool("background"); }
         public void OpenLayout(object control) { ShowTool("layout"); }
         public void OpenSpacing(object control) { ShowTool("spacing"); }
+        public void OpenMeasurement(object control)
+        {
+            Run(delegate
+            {
+                if(currentForm!=null){currentForm.Activate();return;}
+                PowerPointHost host=new PowerPointHost(application);SelectionSnapshot selection=host.ReadMeasurementSelection();
+                try
+                {
+                    using(MeasurementForm form=new MeasurementForm(host,selection))
+                    {currentForm=form;if(host.WindowHandle==IntPtr.Zero)form.ShowDialog();else form.ShowDialog(new WindowOwner(host.WindowHandle));}
+                }
+                finally{currentForm=null;}
+            });
+        }
+        public void ResetMeasurement(object control)
+        {Run(delegate{PowerPointHost host=new PowerPointHost(application);host.ResetMeasurements(host.ReadMeasurementSelection());});}
         public void ArrangeSmart(object control)
         {
             Run(delegate { new PowerPointHost(application).ArrangeAllPhotos(); });
@@ -98,7 +120,7 @@ namespace LabPhotoTools
         }
         public void OpenHelp(object control)
         {
-            MessageBox.Show("사진 회전: 선택한 사진을 0.1° 단위로 회전하고 가장자리를 자릅니다.\n배경지우기: 별도 창에서 배경 제거 결과를 확인합니다. 두 기능 모두 원본 슬라이드를 복제하여 적용합니다.\n\n자동 배열과 간격 조절: 사진·도형·텍스트를 함께 선택해도 선택된 사진만 처리합니다.\n알아서 배열: 사진이 선택되어 있으면 그 사진만, 선택이 없으면 현재 슬라이드의 사진을 비율에 맞춰 앞 행부터 채웁니다. 4~16장은 정해진 촘촘한 격자로 배열하며 모든 행의 왼쪽을 맞추고 중앙 80% 영역을 사용합니다. 라벨 사진은 라벨과 사진의 그룹 전체를 함께 이동·크기 조절하여 왼쪽 위 정렬을 유지합니다.\n\n빠른 번호 매기기: 리본의 숫자나 알파벳을 누르면 현재 상태에서 라벨이 없는 사진을 왼쪽 위부터 순서대로 찾아 사진의 왼쪽 위에 붙이고 사진과 그룹화합니다. 기존 라벨을 지운 사진은 다시 라벨 대상이 됩니다. 사진이 없거나 모두 라벨이 붙었으면 독립 라벨을 빈 위치에 추가합니다. (알파벳)은 (A)~(K)를 바로 표시하며 ‘L+’는 다음 알파벳을 추가합니다. 숫자 형식의 ‘11+’는 같은 형식의 가장 큰 번호 다음 값(최소 11)을 추가합니다. 리본 오른쪽에서 글꼴·크기·색을 바로 바꾸세요. 입력한 크기나 색상 코드는 Enter로 확정합니다. 설정은 자동으로 저장되어 이후 만드는 모든 번호에 적용됩니다. 17 pt 라벨의 기본 상자 한 변·원 지름은 0.85 cm이며 글자 크기에 비례합니다. 긴 번호는 글자가 잘리지 않도록 필요한 만큼 커집니다.\n\n작은 화면에서는 창 내용이 세로로 바뀌며 스크롤로 모두 볼 수 있습니다. 배치와 번호 추가는 Ctrl+Z로 취소할 수 있습니다.\n사진 처리는 이 PC 안에서 실행됩니다.", "Lab Photo Tools 0.1.11", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            MessageBox.Show("치수측정 탭: 사진 한 장을 선택한 뒤 자 모양 버튼을 누릅니다. 스케일바 기준을 지정하고 실제 길이·단위를 입력하여 스케일을 적용하세요. 선·원·사각형·타원·각도·면적을 측정하고 복제 슬라이드에 사진과 묶어 저장합니다. 측정 좌표와 값은 치수측정 대화창에서 수정하세요.\n\n사진 회전: 선택한 사진을 0.1° 단위로 회전하고 가장자리를 자릅니다.\n배경지우기: 별도 창에서 배경 제거 결과를 확인합니다. 두 기능 모두 원본 슬라이드를 복제하여 적용합니다.\n\n자동 배열과 간격 조절: 사진·도형·텍스트를 함께 선택해도 선택된 사진만 처리합니다.\n알아서 배열: 사진이 선택되어 있으면 그 사진만, 선택이 없으면 현재 슬라이드의 사진을 비율에 맞춰 앞 행부터 채웁니다. 4~16장은 정해진 촘촘한 격자로 배열하며 모든 행의 왼쪽을 맞추고 중앙 80% 영역을 사용합니다. 라벨 사진은 라벨과 사진의 그룹 전체를 함께 이동·크기 조절하여 왼쪽 위 정렬을 유지합니다.\n\n빠른 번호 매기기: 리본의 숫자나 알파벳을 누르면 현재 상태에서 라벨이 없는 사진을 왼쪽 위부터 순서대로 찾아 사진의 왼쪽 위에 붙이고 사진과 그룹화합니다. 기존 라벨을 지운 사진은 다시 라벨 대상이 됩니다. 사진이 없거나 모두 라벨이 붙었으면 독립 라벨을 빈 위치에 추가합니다. (알파벳)은 (A)~(K)를 바로 표시하며 ‘L+’는 다음 알파벳을 추가합니다. 숫자 형식의 ‘11+’는 같은 형식의 가장 큰 번호 다음 값(최소 11)을 추가합니다. 리본 오른쪽에서 글꼴·크기·색을 바로 바꾸세요. 입력한 크기나 색상 코드는 Enter로 확정합니다. 설정은 자동으로 저장되어 이후 만드는 모든 번호에 적용됩니다. 17 pt 라벨의 기본 상자 한 변·원 지름은 0.85 cm이며 글자 크기에 비례합니다. 긴 번호는 글자가 잘리지 않도록 필요한 만큼 커집니다.\n\n작은 화면에서는 창 내용이 세로로 바뀌며 스크롤로 모두 볼 수 있습니다. 배치와 번호 추가는 Ctrl+Z로 취소할 수 있습니다.\n사진 처리는 이 PC 안에서 실행됩니다.", "Lab Photo Tools 0.1.12", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
         private void ShowTool(string mode)
         {

@@ -142,6 +142,7 @@ namespace LabPhotoTools
         {
             public PhotoSnapshot Photo;
             public object OrphanedLabelGroup;
+            public object MeasurementGroup;
         }
         private static void CollectUnlabelledPhotoCandidates(dynamic shapes, List<NumberPhotoCandidate> candidates)
         {
@@ -150,6 +151,13 @@ namespace LabPhotoTools
                 dynamic shape = shapes.Item(i);
                 if ((int)shape.Type == 6)
                 {
+                    if (!string.IsNullOrEmpty(TagValue(shape,"LABPHOTO_MEASUREMENT_GROUP")))
+                    {
+                        List<PhotoSnapshot> photos=new List<PhotoSnapshot>();CollectPhotos(shape.GroupItems,photos);
+                        List<object> labels=new List<object>();CollectNumberShapes(shape.GroupItems,labels);
+                        if(photos.Count==1&&labels.Count==0)candidates.Add(new NumberPhotoCandidate {Photo=photos[0],MeasurementGroup=(object)shape});
+                        continue;
+                    }
                     // A label group normally has two children. If the user
                     // deletes only its label, PowerPoint can leave a one-item
                     // group containing the tagged photograph. Treat that
@@ -241,15 +249,18 @@ namespace LabPhotoTools
         private static bool SetAttachedLabelGroupBox(PhotoSnapshot photo, PhotoBox target)
         {
             dynamic picture = photo.Shape;
-            if (string.IsNullOrEmpty(TagValue(picture, "LABPHOTO_ATTACHED_LABEL"))) return false;
             dynamic group;
             try { group = picture.ParentGroup; }
             catch { return false; }
             if (group == null || (int)group.Type != 6) return false;
+            dynamic top=TopMeasurementParent(picture);
+            bool measured=!string.IsNullOrEmpty(TagValue(top,"LABPHOTO_MEASUREMENT_GROUP"));
+            if(measured)group=top;
+            if (!measured && string.IsNullOrEmpty(TagValue(picture, "LABPHOTO_ATTACHED_LABEL"))) return false;
             bool hasLabel = false;
             for (int i = 1; i <= (int)group.GroupItems.Count; i++)
                 if (!string.IsNullOrEmpty(TagValue(group.GroupItems.Item(i), "LABPHOTO_NUMBER_STYLE"))) { hasLabel = true; break; }
-            if (!hasLabel) return false;
+            if (!hasLabel && !measured) return false;
             double currentWidth = (double)picture.Width;
             double currentHeight = (double)picture.Height;
             if (currentWidth <= 0 || currentHeight <= 0)
@@ -342,7 +353,9 @@ namespace LabPhotoTools
                 {
                     PhotoSnapshot photo = PrepareUnlabelledPhoto(candidate);
                     shape.Left = (float)photo.Left; shape.Top = (float)photo.Top;
-                    dynamic group = slide.Shapes.Range(new object[] { photo.Name, (string)shape.Name }).Group();
+                    string targetName=candidate.MeasurementGroup==null?photo.Name:(string)((dynamic)candidate.MeasurementGroup).Name;
+                    dynamic group = slide.Shapes.Range(new object[] { targetName, (string)shape.Name }).Group();
+                    if(candidate.MeasurementGroup!=null)group.Tags.Add("LABPHOTO_MEASUREMENT_GROUP","1");
                     ((dynamic)photo.Shape).Tags.Add("LABPHOTO_ATTACHED_LABEL", "1");
                     group.Name = "LabNumberGroup_" + style + "_" + number + "_" + group.Id;
                     group.Select(-1);

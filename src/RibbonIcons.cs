@@ -41,6 +41,7 @@ namespace LabPhotoTools
         }
         internal static Bitmap Draw(string id)
         {
+            if(id=="labPhotoMeasure")return MeasurementIcons.Draw("ruler",64);
             Bitmap bitmap = new Bitmap(64, 64, PixelFormat.Format32bppArgb);
             using (Graphics g = Graphics.FromImage(bitmap))
             using (Pen ink = new Pen(Color.FromArgb(40, 75, 110), 2.8f))

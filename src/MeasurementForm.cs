@@ -1,0 +1,220 @@
+using System;
+using System.Collections.Generic;
+using System.Drawing;
+using System.IO;
+using System.Linq;
+using System.Text;
+using System.Windows.Forms;
+
+namespace LabPhotoTools
+{
+    public sealed class MeasurementForm : Form
+    {
+        private readonly PowerPointHost host;
+        private readonly SelectionSnapshot selection;
+        private readonly MeasurementSession session;
+        internal readonly MeasurementCanvas Canvas=new MeasurementCanvas();
+        private readonly MeasurementMagnifier magnifier=new MeasurementMagnifier();
+        private readonly TableLayoutPanel body=new TableLayoutPanel {Dock=DockStyle.Fill,Margin=Padding.Empty};
+        private readonly Panel settingsViewport=new Panel {Dock=DockStyle.Fill,AutoScroll=true,Margin=Padding.Empty};
+        private readonly TableLayoutPanel settings=new TableLayoutPanel {Dock=DockStyle.Top,AutoSize=true,ColumnCount=1,Margin=Padding.Empty,Padding=new Padding(8)};
+        private readonly Label status=new Label {AutoSize=true,Dock=DockStyle.Fill,Margin=new Padding(6),Text="사진의 스케일바 양 끝을 지정해 주세요."};
+        private readonly Label scaleStatus=new Label {AutoSize=true,Dock=DockStyle.Fill,Margin=new Padding(4)};
+        private readonly NumericUpDown actual=new NumericUpDown {DecimalPlaces=6,Minimum=.000001m,Maximum=1000000000,Value=100,Width=140};
+        private readonly ComboBox units=new ComboBox {DropDownStyle=ComboBoxStyle.DropDownList,Width=65};
+        private readonly NumericUpDown lineWidth=new NumericUpDown {Minimum=1,Maximum=12,Value=2,Width=60};
+        private readonly NumericUpDown fontSize=new NumericUpDown {Minimum=6,Maximum=72,Value=13,Width=60};
+        private readonly CheckBox dashed=new CheckBox {Text="점선",AutoSize=true}, filled=new CheckBox {Text="채우기",AutoSize=true}, guide=new CheckBox {Text="보조 도형 (값 숨김)",AutoSize=true}, obtuse=new CheckBox {Text="수평·수직 각도: 둔각",AutoSize=true};
+        private readonly TextBox annotation=new TextBox {Width=260,Text="메모",AccessibleName="주석 텍스트"};
+        private readonly ListView results=new ListView {View=View.Details,FullRowSelect=true,MultiSelect=true,HideSelection=false,Dock=DockStyle.Top,Height=185};
+        private readonly List<Button> toolButtons=new List<Button>();
+        private readonly ToolTip tips=new ToolTip();
+        private MeasurementItem pendingCalibration;
+        private bool reflowing,refreshing;
+        private readonly Button apply;
+        private readonly List<Image> buttonImages=new List<Image>();
+        private Label navigationHint;
+        private readonly Panel windowViewport=new Panel {Dock=DockStyle.Fill,AutoScroll=true};
+        private TableLayoutPanel root;
+        public MeasurementForm(PowerPointHost host,SelectionSnapshot selection) : this(host,selection,host.CreateMeasurementSession(selection)) { }
+        internal MeasurementForm(PowerPointHost host,SelectionSnapshot selection,MeasurementSession session)
+        {
+            this.host=host;this.selection=selection;this.session=session;
+            Text="Lab Photo Tools · 치수측정";Font=new Font("맑은 고딕",9.5f);AutoScaleDimensions=new SizeF(96,96);AutoScaleMode=AutoScaleMode.Dpi;
+            StartPosition=FormStartPosition.CenterParent;ClientSize=new Size(1280,830);MinimumSize=new Size(380,340);BackColor=Color.FromArgb(248,249,251);MinimizeBox=false;
+            root=new TableLayoutPanel {Dock=DockStyle.None,ColumnCount=1,RowCount=4,Padding=new Padding(10)};
+            root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));root.RowStyles.Add(new RowStyle(SizeType.AutoSize));root.RowStyles.Add(new RowStyle(SizeType.Percent,100));root.RowStyles.Add(new RowStyle(SizeType.AutoSize));root.RowStyles.Add(new RowStyle(SizeType.AutoSize));Controls.Add(windowViewport);windowViewport.Controls.Add(root);
+            FlowLayoutPanel top=Flow();top.Controls.Add(Label("치수측정",true));
+            top.Controls.Add(Button("전체 보기",delegate{Canvas.ResetView();}));top.Controls.Add(Button("확대 +",delegate{Canvas.Zoom(1.25);}));top.Controls.Add(Button("축소 −",delegate{Canvas.Zoom(.8);}));
+            navigationHint=Label("휠: 확대 · 가운데 버튼: 이동 · WASD/방향키: 1 px · Enter: 점 확정",false);top.Controls.Add(navigationHint);
+            root.Controls.Add(top,0,0);root.Controls.Add(body,0,1);root.Controls.Add(status,0,2);
+            body.Controls.Add(Canvas,0,0);body.Controls.Add(settingsViewport,1,0);settingsViewport.Controls.Add(settings);settings.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));
+            Canvas.Document=session.Document;Canvas.Source=session.Image;magnifier.Source=session.Image;magnifier.Document=session.Document;
+            BuildSettings();
+            if(Canvas.Document.CalibrationLengthMicrons>0)actual.Value=Math.Max(actual.Minimum,Math.Min(actual.Maximum,(decimal)(Canvas.Document.CalibrationLengthMicrons/MeasurementGeometry.UnitFactor(Canvas.Document.Unit))));
+            FlowLayoutPanel footer=Flow();footer.FlowDirection=FlowDirection.RightToLeft;
+            apply=Button("복사본에 적용",Apply);apply.BackColor=Color.FromArgb(25,98,180);apply.ForeColor=Color.White;
+            footer.Controls.Add(apply);footer.Controls.Add(Button("닫기",delegate{Close();}));footer.Controls.Add(Button("CSV 저장",Export));root.Controls.Add(footer,0,3);
+            Canvas.CalibrationReady+=delegate(MeasurementItem item){pendingCalibration=item;scaleStatus.Text="기준 "+MeasurementGeometry.ReferenceLength(item).ToString("0.###")+" px · 실제 길이를 입력하고 스케일 적용";status.Text="선택한 기준의 실제 길이를 입력하고 ‘스케일 적용’을 누르세요.";};
+            Canvas.Changed+=RefreshResults;Canvas.Status+=delegate(string text){status.Text=text;};
+            Canvas.HoverChanged+=delegate(MeasurePoint p){magnifier.Point=p;magnifier.Invalidate();};
+            body.SizeChanged+=delegate{Reflow();};Shown+=delegate{FitScreen();Reflow();};
+            windowViewport.SizeChanged+=delegate{Reflow();};
+            RefreshResults();Canvas.SetTool(Canvas.Document.HasScale?"select":"line",!Canvas.Document.HasScale);
+            if(Canvas.Document.HasScale)status.Text="저장된 스케일과 측정 도형을 불러왔습니다.";
+            tips.SetToolTip(actual,"스케일바의 실제 길이. 평행선은 간격, 3점원은 지름입니다.");
+        }
+        private static FlowLayoutPanel Flow(){return new FlowLayoutPanel {AutoSize=true,AutoSizeMode=AutoSizeMode.GrowAndShrink,Dock=DockStyle.Top,WrapContents=true,Margin=Padding.Empty};}
+        private Label Label(string text,bool bold){return new Label {Text=text,AutoSize=true,Margin=new Padding(4,8,4,5),Font=bold?new Font(Font,FontStyle.Bold):Font};}
+        private Button Button(string text,Action action)
+        {Button b=new Button {Text=text,AutoSize=true,AutoSizeMode=AutoSizeMode.GrowAndShrink,Padding=new Padding(6,5,6,5),Margin=new Padding(3),FlatStyle=FlatStyle.Flat,BackColor=Color.White};b.Click+=delegate{try{action();}catch(Exception ex){status.Text=ex.Message;}};return b;}
+        private void Add(Control control){settings.RowCount++;settings.RowStyles.Add(new RowStyle(SizeType.AutoSize));settings.Controls.Add(control,0,settings.RowCount-1);}
+        private void BuildSettings()
+        {
+            Add(Label("1. 수동 스케일",true));FlowLayoutPanel calibration=Flow();
+            foreach(string kind in new[]{"line","gap","circle3"})
+            {string k=kind;Button b=Button(k=="line"?"선":k=="gap"?"평행선":"3점원",delegate{ChooseTool(k,true);});SetImage(b,k);calibration.Controls.Add(b);}
+            Add(calibration);FlowLayoutPanel scaleRow=Flow();scaleRow.Controls.Add(actual);units.Items.AddRange(new object[]{"nm","µm","mm","cm"});units.SelectedItem=Canvas.Document.Unit;scaleRow.Controls.Add(units);Add(scaleRow);
+            FlowLayoutPanel scaleActions=Flow();scaleActions.Controls.Add(Button("스케일 적용",ApplyScale));scaleActions.Controls.Add(Button("표시 단위 변경",delegate{Canvas.PushUndo();Canvas.Document.Unit=(string)units.SelectedItem;RefreshResults();}));Add(scaleActions);Add(scaleStatus);
+            magnifier.Dock=DockStyle.Top;magnifier.Height=130;magnifier.Margin=new Padding(4);Add(magnifier);
+            Add(Label("2. 측정 도구",true));FlowLayoutPanel tools=Flow();
+            foreach(KeyValuePair<string,string> pair in MeasurementGeometry.Names)
+            {
+                string k=pair.Key;Button b=Button(pair.Value,delegate{ChooseTool(k,false);});b.Tag=k;SetImage(b,k);tools.Controls.Add(b);toolButtons.Add(b);
+                tips.SetToolTip(b,Hint(k));
+            }
+            Add(tools);FlowLayoutPanel edit=Flow();
+            edit.Controls.Add(Button("선택·이동",delegate{ChooseTool("select",false);}));edit.Controls.Add(Button("전체 선택",Canvas.SelectAll));
+            edit.Controls.Add(Button("지우개",delegate{ChooseTool("erase",false);}));edit.Controls.Add(Button("선택 삭제",Canvas.DeleteSelected));
+            edit.Controls.Add(Button("전체 삭제",Canvas.ClearAll));edit.Controls.Add(Button("실행 취소",Canvas.Undo));edit.Controls.Add(Button("다시 실행",Canvas.Redo));
+            edit.Controls.Add(Button("그리기 완료",Canvas.Finish));Add(edit);
+            Add(Label("3. 선·측정값 서식",true));FlowLayoutPanel format=Flow();
+            format.Controls.Add(Label("선 굵기",false));format.Controls.Add(lineWidth);format.Controls.Add(Label("글자 크기",false));format.Controls.Add(fontSize);
+            format.Controls.Add(Button("선 색",delegate{ChooseColor(false);}));format.Controls.Add(Button("글자 색",delegate{ChooseColor(true);}));
+            format.Controls.Add(dashed);format.Controls.Add(filled);format.Controls.Add(guide);format.Controls.Add(obtuse);Add(format);
+            Add(annotation);Add(Button("선택 도형에 서식 적용",delegate{SyncStyle();Canvas.ApplyStyle();}));
+            foreach(Control c in new Control[]{lineWidth,fontSize})((NumericUpDown)c).ValueChanged+=delegate{SyncStyle();};
+            dashed.CheckedChanged+=delegate{SyncStyle();};filled.CheckedChanged+=delegate{SyncStyle();};guide.CheckedChanged+=delegate{SyncStyle();};obtuse.CheckedChanged+=delegate{SyncStyle();};annotation.TextChanged+=delegate{SyncStyle();};
+            Add(Label("4. 측정 결과",true));results.Columns.Add("#",34);results.Columns.Add("도구",90);results.Columns.Add("측정값",280);Add(results);
+            results.SelectedIndexChanged+=delegate
+            {if(refreshing)return;Canvas.Selected.Clear();foreach(ListViewItem row in results.SelectedItems)Canvas.Selected.Add((int)row.Tag);Canvas.Invalidate();};
+        }
+        private void SyncStyle(){Canvas.Style.LineWidth=(float)lineWidth.Value;Canvas.Style.FontSize=(float)fontSize.Value;Canvas.Style.Dashed=dashed.Checked;Canvas.Style.Filled=filled.Checked;Canvas.Style.Guide=guide.Checked;Canvas.Style.Obtuse=obtuse.Checked;Canvas.Style.Note=annotation.Text;}
+        private void ChooseColor(bool text)
+        {using(ColorDialog dialog=new ColorDialog {Color=Color.FromArgb(text?Canvas.Style.TextColorArgb:Canvas.Style.ColorArgb),FullOpen=true})if(dialog.ShowDialog(this)==DialogResult.OK){if(text)Canvas.Style.TextColorArgb=dialog.Color.ToArgb();else Canvas.Style.ColorArgb=dialog.Color.ToArgb();}}
+        private void ChooseTool(string k,bool calibration)
+        {
+            if(!calibration&&!Canvas.Document.HasScale&&k!="select"&&k!="erase"){status.Text="먼저 기준을 지정하고 스케일을 적용하세요.";return;}
+            SyncStyle();Canvas.SetTool(k,calibration);status.Text=(calibration?"스케일 기준: ":"")+Hint(k);RefreshButtonStates();
+        }
+        private static string Hint(string k)
+        {
+            switch(k)
+            {
+                case "line":return "두 끝점을 클릭하세요.";
+                case "gap":case "pointline":return "기준선 2점 → 측정할 위치를 차례로 클릭 → Enter 또는 우클릭으로 완료.";
+                case "circle3":return "원 둘레 위의 서로 떨어진 세 점을 클릭하세요.";
+                case "circle":return "중심점 → 원 둘레의 한 점을 클릭하세요.";
+                case "circle_distance":return "기존 원 두 개의 둘레나 중심을 클릭하세요. Min은 외부 간격, Center는 중심 거리입니다.";
+                case "rect":return "사각형의 대각선 두 꼭짓점을 클릭하세요.";
+                case "rect3":return "첫 변의 2점 → 높이 방향 1점을 클릭하세요.";
+                case "ellipse":return "한 축의 양 끝점 → 다른 축 방향의 1점을 클릭하세요.";
+                case "angle":return "첫 점 → 꼭짓점 → 끝점을 클릭하세요.";
+                case "hangle":case "vangle":return "시작점 → 끝점을 클릭하세요. ‘둔각’으로 보각을 선택할 수 있습니다.";
+                case "curve":return "시작점 → 제어점 → 끝점을 반복해서 클릭 → Enter 또는 우클릭으로 완료.";
+                case "polygon":case "polyline":return "점을 차례로 클릭 → Enter 또는 우클릭으로 완료.";
+                case "lasso":case "draw":return "마우스 왼쪽 버튼을 누른 채 드래그하고 놓으면 완료됩니다.";
+                case "select":return "도형을 끌어 이동 · 측정값을 끌어 위치 조정 · Ctrl+클릭: 여러 개 선택.";
+                case "erase":return "삭제할 측정 도형을 클릭하세요. Ctrl+Z로 되돌릴 수 있습니다.";
+                case "text":return "주석 입력란의 텍스트를 넣을 위치를 클릭하세요.";
+                default:return "사진에서 위치를 클릭하세요. Esc로 그리기를 취소합니다.";
+            }
+        }
+        private void ApplyScale()
+        {
+            MeasurementItem reference=pendingCalibration??Canvas.Document.Calibration;
+            // Validate before saving an undo entry, and preserve old scale on error.
+            double pixels=MeasurementGeometry.ReferenceLength(reference);if(pixels<.01)throw new InvalidOperationException("기준을 다시 지정하세요.");
+            Canvas.PushUndo();Canvas.Document.Calibrate(reference,(double)actual.Value,(string)units.SelectedItem);pendingCalibration=null;
+            status.Text="스케일 적용 완료. 측정 도구를 선택하세요.";Canvas.SetTool("select",false);RefreshResults();
+        }
+        private void RefreshButtonStates()
+        {foreach(Button b in toolButtons){b.Enabled=Canvas.Document.HasScale;b.BackColor=(string)b.Tag==Canvas.Tool&&!Canvas.Calibrating?Color.FromArgb(205,226,249):Color.White;}}
+        private void RefreshResults()
+        {
+            refreshing=true;
+            try
+            {
+                magnifier.Document=Canvas.Document;RefreshButtonStates();
+                scaleStatus.Text=pendingCalibration!=null?"기준 "+MeasurementGeometry.ReferenceLength(pendingCalibration).ToString("0.###")+" px · 실제 길이 입력 후 스케일 적용":Canvas.Document.HasScale?"Scale: "+Canvas.Document.MicronsPerPixel.ToString("G6")+" µm/px · 표시 "+Canvas.Document.Unit:"Scale: 미설정 · 기준을 지정하세요.";
+                results.BeginUpdate();results.Items.Clear();
+                foreach(MeasurementItem i in Canvas.Document.Items)
+                {
+                    ListViewItem row=new ListViewItem(new[]{i.Id.ToString(),MeasurementGeometry.Names[i.Kind],MeasurementGeometry.Build(i,Canvas.Document).Text.Replace("\n"," / ")}){Tag=i.Id};
+                    results.Items.Add(row);row.Selected=Canvas.Selected.Contains(i.Id);
+                }
+                results.EndUpdate();Canvas.Invalidate();if(apply!=null)apply.Enabled=Canvas.Document.HasScale;
+            }
+            finally{refreshing=false;}
+        }
+        private void SetImage(Button button,string kind)
+        {Bitmap image=MeasurementIcons.Draw(kind,24);buttonImages.Add(image);button.Image=image;button.TextImageRelation=TextImageRelation.ImageBeforeText;}
+        private void Reflow()
+        {
+            if(reflowing)return;reflowing=true;
+            try
+            {
+                float scale=Font.SizeInPoints/9.5f*DeviceDpi/96f;bool wide=body.ClientSize.Width>=900*scale;
+                // If Windows text scaling leaves too little physical space,
+                // retain a usable layout and make the whole window scrollable.
+                int height=Math.Max(windowViewport.ClientSize.Height,(int)(Math.Min(460,ClientSize.Height)*scale));
+                int width=windowViewport.ClientSize.Width;
+                root.Bounds=new Rectangle(windowViewport.AutoScrollPosition.X,windowViewport.AutoScrollPosition.Y,width,height);
+                navigationHint.Visible=ClientSize.Height>=550*scale;
+                body.SuspendLayout();body.ColumnStyles.Clear();body.RowStyles.Clear();body.ColumnCount=wide?2:1;body.RowCount=wide?1:2;
+                body.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,wide?67:100));if(wide)body.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,33));
+                body.RowStyles.Add(new RowStyle(SizeType.Percent,wide?100:65));if(!wide)body.RowStyles.Add(new RowStyle(SizeType.Percent,35));
+                body.SetCellPosition(Canvas,new TableLayoutPanelCellPosition(0,0));body.SetCellPosition(settingsViewport,new TableLayoutPanelCellPosition(wide?1:0,wide?0:1));
+                settings.MinimumSize=new Size((int)(310*scale),0);body.ResumeLayout(true);status.MaximumSize=new Size(Math.Max(100,ClientSize.Width-40),0);root.PerformLayout();
+            }
+            finally{reflowing=false;}
+        }
+        private void FitScreen()
+        {Rectangle work=Screen.FromHandle(Handle).WorkingArea;MinimumSize=new Size(Math.Min(MinimumSize.Width,work.Width-12),Math.Min(MinimumSize.Height,work.Height-12));Size=new Size(Math.Min(Width,work.Width-12),Math.Min(Height,work.Height-12));Location=new Point(work.X+(work.Width-Width)/2,work.Y+(work.Height-Height)/2);}
+        private void Export()
+        {using(SaveFileDialog dialog=new SaveFileDialog {Filter="CSV 파일|*.csv",FileName="측정결과.csv"})if(dialog.ShowDialog(this)==DialogResult.OK)File.WriteAllText(dialog.FileName,Canvas.Document.Csv(),new UTF8Encoding(true));}
+        private void Apply()
+        {
+            if(!Canvas.Document.HasScale)throw new InvalidOperationException("스케일을 먼저 설정하세요.");
+            if(pendingCalibration!=null)throw new InvalidOperationException("새 기준에 스케일을 적용한 뒤 저장하세요.");
+            if(Canvas.HasUnfinishedDrawing)throw new InvalidOperationException("그리는 도형을 먼저 완성하세요. 그리기 완료 또는 Esc로 취소한 뒤 적용할 수 있습니다.");
+            apply.Enabled=false;UseWaitCursor=true;
+            try{host.ApplyMeasurements(selection,Canvas.Document);DialogResult=DialogResult.OK;Close();}
+            finally{UseWaitCursor=false;if(!IsDisposed)apply.Enabled=true;}
+        }
+        protected override void Dispose(bool disposing)
+        {if(disposing){Canvas.Source=null;magnifier.Source=null;session.Dispose();tips.Dispose();foreach(Image image in buttonImages)image.Dispose();}base.Dispose(disposing);}
+    }
+    internal static class MeasurementIcons
+    {
+        internal static Bitmap Draw(string kind,int size)
+        {
+            Bitmap image=new Bitmap(size,size);using(Graphics g=Graphics.FromImage(image))using(Pen pen=new Pen(Color.FromArgb(40,75,110),2))
+            {
+                g.SmoothingMode=System.Drawing.Drawing2D.SmoothingMode.AntiAlias;g.ScaleTransform(size/32f,size/32f);
+                if(kind=="ruler"){g.TranslateTransform(16,16);g.RotateTransform(-35);g.FillRectangle(Brushes.LightSteelBlue,-13,-6,26,12);g.DrawRectangle(pen,-13,-6,26,12);for(int x=-9;x<=10;x+=4)g.DrawLine(pen,x,-6,x,x%2==0?2:-1);}
+                else if(kind=="circle"||kind=="circle3"||kind=="ellipse"){g.DrawEllipse(pen,4,kind=="ellipse"?9:4,24,kind=="ellipse"?14:24);if(kind=="circle")g.DrawLine(pen,16,16,27,16);else for(int i=0;i<3;i++){double t=i*2*Math.PI/3;g.FillEllipse(Brushes.SteelBlue,(float)(14+12*Math.Cos(t)),(float)(14+12*Math.Sin(t)),4,4);}}
+                else if(kind=="rect"||kind=="rect3"){if(kind=="rect3"){g.TranslateTransform(16,16);g.RotateTransform(-20);g.TranslateTransform(-16,-16);}g.DrawRectangle(pen,5,7,23,18);}
+                else if(kind=="angle"||kind=="hangle"||kind=="vangle"){g.DrawLines(pen,new[]{new Point(5,4),new Point(5,27),new Point(28,19)});g.DrawArc(pen,0,18,13,13,260,95);}
+                else if(kind=="gap"||kind=="pointline"){g.DrawLine(pen,4,7,28,7);if(kind=="gap")g.DrawLine(pen,4,26,28,26);g.DrawLine(pen,16,7,16,26);g.FillEllipse(Brushes.SteelBlue,13,23,6,6);}
+                else if(kind=="circle_distance"){g.DrawEllipse(pen,1,5,13,13);g.DrawEllipse(pen,18,14,13,13);g.DrawLine(pen,7,11,24,20);}
+                else if(kind=="polygon"||kind=="lasso"||kind=="curve"){g.DrawPolygon(pen,new[]{new Point(4,8),new Point(18,3),new Point(27,14),new Point(21,28),new Point(8,24)});}
+                else if(kind=="text"){using(Font f=new Font("Arial",25,FontStyle.Bold,GraphicsUnit.Pixel))g.DrawString("T",f,Brushes.SteelBlue,5,1);}
+                else if(kind=="point"){g.DrawLine(pen,16,3,16,29);g.DrawLine(pen,3,16,29,16);}
+                else if(kind=="polyline"||kind=="draw")g.DrawLines(pen,new[]{new Point(3,26),new Point(11,6),new Point(20,25),new Point(29,5)});
+                else {g.DrawLine(pen,4,27,28,4);if(kind=="arrow")g.DrawLines(pen,new[]{new Point(17,5),new Point(28,4),new Point(27,15)});else{g.FillEllipse(Brushes.SteelBlue,1,24,6,6);g.FillEllipse(Brushes.SteelBlue,25,1,6,6);}}
+            }return image;
+        }
+    }
+}
+

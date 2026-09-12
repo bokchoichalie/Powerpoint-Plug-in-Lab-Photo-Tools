@@ -119,7 +119,7 @@ foreach ($view in Get-LabRegistryViews) {
         $addinKey = $hive.CreateSubKey("Software\Microsoft\Office\PowerPoint\Addins\$script:LabProgId")
         try {
             $addinKey.SetValue('FriendlyName', 'Lab Photo Tools')
-            $addinKey.SetValue('Description', 'Local photo background removal, straightening, layout, and spacing.')
+            $addinKey.SetValue('Description', 'Local photo tools, layout, labels, and calibrated image measurements.')
             $addinKey.SetValue('LoadBehavior', 3, [Microsoft.Win32.RegistryValueKind]::DWord)
             $addinKey.SetValue('CommandLineSafe', 0, [Microsoft.Win32.RegistryValueKind]::DWord)
         } finally { $addinKey.Dispose() }
