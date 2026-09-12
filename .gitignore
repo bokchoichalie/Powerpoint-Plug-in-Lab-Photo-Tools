@@ -1,0 +1,10 @@
+build/
+dist/
+runtime/
+models/
+config.json
+**/__pycache__/
+*.pyc
+.vs/
+*.user
+*.suo
