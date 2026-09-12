@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Drawing;
 using System.IO;
 using System.Linq;
@@ -62,7 +62,7 @@ internal static class QuickPowerPointValidation
             dynamic standalone = host.AddNumberLabel("suffix", 0);
             Check((string)standalone.TextFrame2.TextRange.Text == "0)" && (int)labels.Shapes.Count == 4, "Standalone label when all photos are labelled");
 
-            string saved = Path.Combine(output, "LabPhotoTools-0.1.12-quick-validation.pptx");
+            string saved = Path.Combine(output, "LabPhotoTools-0.1.13-quick-validation.pptx");
             presentation.SaveAs(saved, 24); presentation.Close(); presentation = null;
             presentation = app.Presentations.Open(saved, 0, 0, -1); app.ActiveWindow.View.GotoSlide(2);
             dynamic added = presentation.Slides.Item(2).Shapes.AddPicture(image, 0, -1, 500f, 45f, 100f, 70f);
@@ -106,4 +106,3 @@ internal static class QuickPowerPointValidation
         throw new Exception("Label group has no photograph");
     }
 }
-

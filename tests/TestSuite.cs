@@ -85,7 +85,7 @@ internal static class TestSuite
         XmlDocument xml = new XmlDocument(); xml.LoadXml(connect.GetCustomUI("test"));
         XmlNamespaceManager ns = new XmlNamespaceManager(xml.NameTable); ns.AddNamespace("r", xml.DocumentElement.NamespaceURI);
         XmlNodeList groups = xml.SelectNodes("//r:group",ns);
-        Check(groups[1].Attributes["label"].Value=="배치" && groups[2].Attributes["label"].Value=="빠른 번호 매기기" && groups[3].Attributes["label"].Value=="도움말", "Ribbon order");
+        Check(groups[1].Attributes["label"].Value=="배치" && groups[2].Attributes["label"].Value=="빠른 번호 매기기" && groups[3].Attributes["label"].Value=="치수측정" && groups[4].Attributes["label"].Value=="도움말", "Ribbon order");
         Check(xml.SelectNodes("//r:button[starts-with(@id,'number_')]",ns).Count==48,"Expected 44 presets and 4 next buttons");
         XmlNode numbers=xml.SelectSingleNode("//r:group[@id='labPhotoNumbers']",ns);
         Check(numbers.SelectNodes("r:box[starts-with(@id,'numberBox_')]//r:menu | r:box[starts-with(@id,'numberBox_')]//r:gallery | r:box[starts-with(@id,'numberBox_')]//r:dropDown | .//r:toggleButton",ns).Count==0,"Number presets must remain visible");
@@ -295,4 +295,3 @@ internal static class TestSuite
         Console.WriteLine("Dialog layout matrix passed: "+cases+" cases, 800x600 to 4K, 100-300%.");
     }
 }
-

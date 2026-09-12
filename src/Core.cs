@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
@@ -18,7 +18,7 @@ using System.Windows.Forms;
 [assembly: AssemblyTitle("Lab Photo Tools")]
 [assembly: ComVisible(false)]
 [assembly: CompilationRelaxations(8)]
-[assembly: AssemblyVersion("0.1.12.0")]
+[assembly: AssemblyVersion("0.1.13.0")]
 namespace LabPhotoTools
 {
 	[ComVisible(true)]
@@ -1230,4 +1230,3 @@ namespace LabPhotoTools
 		}
 	}
 }
-

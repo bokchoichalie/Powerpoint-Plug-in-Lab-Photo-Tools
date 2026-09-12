@@ -4,6 +4,7 @@ using System.Drawing;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Reflection;
 using System.Windows.Forms;
 using System.Xml;
 using LabPhotoTools;
@@ -72,11 +73,41 @@ internal static class MeasurementTests
         Check(d.Csv().Contains("ID,Tool,Result")&&d.Csv().Contains("mm"),"CSV output");
         var p=PowerPointHost.MeasurementToSlide(new MeasurePoint(0,0),new MeasurementDocument {Width=100,Height=100},new PhotoSnapshot {Left=20,Top=30,Width=100,Height=100,Rotation=90});Near(p.X,120,"rotated point x");Near(p.Y,30,"rotated point y");
         XmlDocument xml=new XmlDocument();xml.LoadXml(new Connect().GetCustomUI("test"));XmlNamespaceManager ns=new XmlNamespaceManager(xml.NameTable);ns.AddNamespace("r",xml.DocumentElement.NamespaceURI);
-        Check(xml.SelectSingleNode("//r:tab[@label='치수측정']//r:button[@onAction='OpenMeasurement']",ns)!=null,"measurement ribbon tab");
+        Check(xml.SelectSingleNode("//r:tab[@id='labPhotoTab']//r:button[@onAction='OpenMeasurement']",ns)!=null,"measurement inside Lab Photo Tools");
+        Check(xml.SelectSingleNode("//r:tab[@id='labMeasurementTab']",ns)==null,"no separate measurement tab");
     }
     private static IEnumerable<Control> Children(Control root){foreach(Control c in root.Controls){yield return c;foreach(Control child in Children(c))yield return child;}}
+    private static void Input(Control c,string method,EventArgs args)
+    {c.GetType().GetMethod(method,BindingFlags.Instance|BindingFlags.NonPublic).Invoke(c,new object[]{args});}
+    private static void PrecisionKeys()
+    {
+        using(Form form=new Form {ClientSize=new Size(800,600)})using(Bitmap bitmap=TestImage())
+        using(MeasurementCanvas c=new MeasurementCanvas {Source=bitmap,Document=new MeasurementDocument {Width=2400,Height=1600}})
+        {
+            form.Controls.Add(c);form.Show();c.SetTool("line",true);c.Zoom(4);Application.DoEvents();
+            Point start=Point.Round(c.ToScreen(new MeasurePoint(1000,700)));
+            Input(c,"OnMouseMove",new MouseEventArgs(MouseButtons.None,0,start.X,start.Y,0));MeasurePoint initial=c.HoverPoint;
+            foreach(Keys key in new[]{Keys.D,Keys.S,Keys.A,Keys.W})
+            {
+                MeasurePoint old=c.HoverPoint;Input(c,"OnKeyDown",new KeyEventArgs(key));Application.DoEvents();
+                Near(c.HoverPoint.X-old.X,key==Keys.D?2:key==Keys.A?-2:0,"WASD loaded pixel X "+key);
+                Near(c.HoverPoint.Y-old.Y,key==Keys.S?2:key==Keys.W?-2:0,"WASD loaded pixel Y "+key);
+                Point cursor=c.PointToClient(Cursor.Position);Check(cursor==Point.Round(c.ToScreen(c.HoverPoint)),"native cursor follows "+key);
+                MeasurePoint exact=c.HoverPoint;Input(c,"OnMouseMove",new MouseEventArgs(MouseButtons.None,0,cursor.X,cursor.Y,0));Near(c.HoverPoint.X,exact.X,"synthetic mouse preserves subpixel");
+            }
+            Near(c.HoverPoint.X,initial.X,"WASD round trip");
+            Input(c,"OnKeyDown",new KeyEventArgs(Keys.D));MeasurePoint first=c.HoverPoint;
+            Point click=c.PointToClient(Cursor.Position);Input(c,"OnMouseDown",new MouseEventArgs(MouseButtons.Left,1,click.X,click.Y,0));
+            MeasurementItem reference=null;c.CalibrationReady+=delegate(MeasurementItem i){reference=i;};
+            Input(c,"OnKeyDown",new KeyEventArgs(Keys.D|Keys.Shift));Input(c,"OnKeyDown",new KeyEventArgs(Keys.Enter));
+            Check(reference!=null,"keyboard and mouse commit calibration");Near(reference.Points[0].X,first.X,"click keeps precision coordinate");Near(MeasurementGeometry.ReferenceLength(reference),20,"Shift ten loaded pixels");
+            c.Rotation=90;c.SetTool("line",true);MeasurePoint before=c.HoverPoint;Input(c,"OnKeyDown",new KeyEventArgs(Keys.D));Near(c.HoverPoint.X,before.X,"rotated nudge X");Near(c.HoverPoint.Y,before.Y-2,"rotated nudge follows visible right");
+            form.Close();
+        }
+    }
     private static void CanvasAndDialog(string output)
     {
+        PrecisionKeys();
         using(MeasurementCanvas canvas=new MeasurementCanvas())
         {
             canvas.Document=new MeasurementDocument {Width=1000,Height=600};canvas.Source=new Bitmap(1000,600);canvas.Size=new Size(700,500);
@@ -89,7 +120,9 @@ internal static class MeasurementTests
         }
         using(MeasurementForm form=new MeasurementForm(new PowerPointHost(new object()),new SelectionSnapshot(),new MeasurementSession {Image=TestImage(),Document=Demo()}))
         {
-            form.Show();Application.DoEvents();form.ClientSize=new Size(1280,830);Application.DoEvents();
+            form.Show();Application.DoEvents();Rectangle work=Screen.FromHandle(form.Handle).WorkingArea;Check(work.Contains(form.Bounds)&&form.Width>=work.Width*.94&&form.Height>=work.Height*.94,"dialog fills monitor work area");
+            Check(form.Canvas.Focused,"measurement keys ready when dialog opens");form.ClientSize=new Size(1280,830);Application.DoEvents();
+            Check(form.FormBorderStyle==FormBorderStyle.FixedDialog&&!form.MaximizeBox,"fixed dialog border");
             using(Bitmap shot=new Bitmap(form.Width,form.Height)){form.DrawToBitmap(shot,new Rectangle(Point.Empty,shot.Size));shot.Save(Path.Combine(output,"measurement-dialog-wide.png"));}
             foreach(Size size in new[]{new Size(780,520),new Size(1024,680),new Size(1280,830),new Size(360,340)})
             {
@@ -97,7 +130,9 @@ internal static class MeasurementTests
                 foreach(TableLayoutPanel panel in Children(form).OfType<TableLayoutPanel>())
                 {var children=panel.Controls.Cast<Control>().Where(c=>c.Visible).ToList();for(int i=0;i<children.Count;i++)for(int j=i+1;j<children.Count;j++)Check(!children[i].Bounds.IntersectsWith(children[j].Bounds),"dialog overlaps at "+size+" "+children[i].Text+" / "+children[j].Text);}
                 Check(form.Canvas.Width>120&&form.Canvas.Height>80,"canvas visible at "+size+": "+form.Canvas.Size+" body="+form.Canvas.Parent.Size);
-                Button apply=Children(form).OfType<Button>().Single(b=>b.Text=="복사본에 적용");Rectangle bnd=form.RectangleToClient(apply.RectangleToScreen(apply.ClientRectangle));Check(form.ClientRectangle.Contains(bnd),"apply accessible "+size+" bounds="+bnd+" root="+form.Controls[0].Controls[0].Bounds);
+                Button apply=Children(form).OfType<Button>().Single(b=>b.Text=="측정 사진 복사");((Panel)form.Controls[0]).ScrollControlIntoView(apply);Application.DoEvents();Rectangle bnd=form.RectangleToClient(apply.RectangleToScreen(apply.ClientRectangle));Check(form.ClientRectangle.Contains(bnd),"apply accessible "+size+" bounds="+bnd+" root="+form.Controls[0].Controls[0].Bounds);
+                Control loupe=Children(form).Single(c=>c.Name=="MeasurementMagnifier");Near((double)loupe.Width/loupe.Height,4.0/3,"4:3 magnifier");
+                Control unit=Children(form).Single(c=>c.AccessibleName=="스케일 단위");Check(unit.Right<=unit.Parent.ClientSize.Width&&unit.Bottom<=unit.Parent.ClientSize.Height,"scale unit not clipped");Check(loupe.PointToScreen(Point.Empty).X>unit.PointToScreen(Point.Empty).X+unit.Width,"magnifier right of scale values");
             }
             form.ClientSize=new Size(780,520);Application.DoEvents();using(Bitmap shot=new Bitmap(form.Width,form.Height)){form.DrawToBitmap(shot,new Rectangle(Point.Empty,shot.Size));shot.Save(Path.Combine(output,"measurement-dialog-small.png"));}form.Close();
         }
@@ -111,12 +146,66 @@ internal static class MeasurementTests
                 form.MinimumSize=Size.Empty;form.ClientSize=size;Application.DoEvents();
                 foreach(TableLayoutPanel panel in Children(form).OfType<TableLayoutPanel>())
                 {var controls=panel.Controls.Cast<Control>().Where(c=>c.Visible).ToList();for(int i=0;i<controls.Count;i++)for(int j=i+1;j<controls.Count;j++)Check(!controls[i].Bounds.IntersectsWith(controls[j].Bounds),"DPI overlap "+scale+" at "+size+" "+controls[i].GetType().Name+" "+controls[i].Text+" "+controls[i].Bounds+" / "+controls[j].GetType().Name+" "+controls[j].Text+" "+controls[j].Bounds);}
-                Button apply=Children(form).OfType<Button>().Single(b=>b.Text=="복사본에 적용");
+                Button apply=Children(form).OfType<Button>().Single(b=>b.Text=="측정 사진 복사");
                 ((Panel)form.Controls[0]).ScrollControlIntoView(apply);Application.DoEvents();
                 Check(form.ClientRectangle.Contains(form.RectangleToClient(apply.RectangleToScreen(apply.ClientRectangle))),"DPI apply reachable by scroll "+scale+" at "+size);
                 Check(form.Canvas.Height>=45,"DPI canvas remains visible "+scale+" at "+size);
+                Control unit=Children(form).Single(c=>c.AccessibleName=="스케일 단위");Check(unit.Right<=unit.Parent.ClientSize.Width&&unit.Bottom<=unit.Parent.ClientSize.Height,"DPI scale unit not clipped "+scale);
+                Control loupe=Children(form).Single(c=>c.Name=="MeasurementMagnifier");Near((double)loupe.Width/loupe.Height,4.0/3,"DPI 4:3 magnifier");
             }
             form.Close();
+        }
+    }
+    private static PhotoSnapshot Snapshot(dynamic s)
+    {return (PhotoSnapshot)typeof(PowerPointHost).GetMethod("SnapshotPhoto",BindingFlags.Static|BindingFlags.NonPublic).Invoke(null,new object[]{(object)s});}
+    private static void Similar(Color a,Color b,string name)
+    {Check(Math.Abs(a.R-b.R)+Math.Abs(a.G-b.G)+Math.Abs(a.B-b.B)<35,name+": "+a+" / "+b);}
+    private static void Orientation(PowerPointHost host,dynamic app,dynamic presentation,string output)
+    {
+        string path=Path.Combine(output,"measurement-orientation-source.png");
+        using(Bitmap image=new Bitmap(600,400))using(Graphics g=Graphics.FromImage(image))
+        {g.FillRectangle(Brushes.Red,0,0,300,200);g.FillRectangle(Brushes.Lime,300,0,300,200);g.FillRectangle(Brushes.Blue,0,200,300,200);g.FillRectangle(Brushes.Yellow,300,200,300,200);image.Save(path);}
+        foreach(string mode in new[]{"normal","h","v","hv","r90","r180","h-r27","nested"})
+        {
+            dynamic slide=presentation.Slides.Add((int)presentation.Slides.Count+1,12);app.ActiveWindow.View.GotoSlide((int)slide.SlideIndex);
+            dynamic photo=slide.Shapes.AddPicture(path,0,-1,280f,220f,400f,266.6667f);photo.Name="Orientation_"+mode;
+            if(mode=="h"||mode=="hv"||mode=="h-r27")photo.Flip(0);if(mode=="v"||mode=="hv")photo.Flip(1);
+            if(mode=="r90")photo.Rotation=90f;if(mode=="r180")photo.Rotation=180f;if(mode=="h-r27")photo.Rotation=27f;
+            dynamic originalGroup=null;
+            if(mode=="nested")
+            {
+                dynamic text=slide.Shapes.AddTextbox(1,220f,150f,150f,30f);text.TextFrame.TextRange.Text="Do not duplicate me";
+                dynamic other=slide.Shapes.AddPicture(path,0,-1,40f,50f,60f,40f);
+                originalGroup=slide.Shapes.Range(new object[]{(string)photo.Name,(string)text.Name,(string)other.Name}).Group();originalGroup.Rotation=27f;originalGroup.Flip(1);
+            }
+            SelectionSnapshot selected=new SelectionSnapshot {Presentation=presentation,Slide=slide,SlideWidth=960,SlideHeight=720};selected.Photos.Add(Snapshot(photo));
+            using(MeasurementSession session=host.CreateMeasurementSession(selected))
+            {
+                var d=session.Document;d.Calibrate(Item("line",d.Width*.2,d.Height*.3,d.Width*.4,d.Height*.3),100,"µm");Add(d,Item("line",d.Width*.2,d.Height*.3,d.Width*.4,d.Height*.3));
+                int originalCount=(int)slide.Shapes.Count;dynamic saved=host.ApplyMeasurements(selected,d);Check((int)slide.Shapes.Count==originalCount+1,"one copied result "+mode);
+                Check((int)saved.GroupItems.Count==3,"only photo, measurement line and result text copied "+mode);
+                saved.Select(-1);var copied=host.ReadMeasurementSelection();
+                using(MeasurementSession reopened=host.CreateMeasurementSession(copied))
+                {Near(reopened.Rotation,session.Rotation,"rotation retained on save "+mode);Similar(reopened.Image.GetPixel(reopened.Image.Width/4,reopened.Image.Height/4),session.Image.GetPixel(session.Image.Width/4,session.Image.Height/4),"no repeated flip "+mode);}
+                PhotoSnapshot copiedPhoto=copied.Photos[0];MeasurePoint expected=PowerPointHost.MeasurementToSlide(d.Items[0].Points[0],d,copiedPhoto);
+                dynamic line=null;for(int n=1;n<=(int)saved.GroupItems.Count;n++){dynamic child=saved.GroupItems.Item(n);if((int)child.Type==5)line=child;}
+                Check(line!=null,"editable freeform exists "+mode);Array node=(Array)line.Nodes.Item(1).Points;
+                Near(Convert.ToDouble(node.GetValue(node.GetLowerBound(0),node.GetLowerBound(1))),expected.X,"saved line X "+mode);Near(Convert.ToDouble(node.GetValue(node.GetLowerBound(0),node.GetLowerBound(1)+1)),expected.Y,"saved line Y "+mode);
+                saved.Delete();
+                string rendered=Path.Combine(output,"measurement-orientation-"+mode+".png");slide.Export(rendered,"PNG",960,720);
+                if(originalGroup!=null)originalGroup.Ungroup();PhotoSnapshot flattened=Snapshot(photo);
+                using(Bitmap slideImage=new Bitmap(rendered))using(MeasurementCanvas c=new MeasurementCanvas {Document=d,Source=session.Image,Rotation=session.Rotation,Size=new Size(840,640),Tool="select"})
+                using(Bitmap preview=new Bitmap(840,640))
+                {
+                    d.Items.Clear();c.DrawToBitmap(preview,new Rectangle(Point.Empty,preview.Size));
+                    foreach(double x in new[]{.25,.75})foreach(double y in new[]{.25,.75})
+                    {
+                        MeasurePoint point=new MeasurePoint(d.Width*x,d.Height*y);PointF view=c.ToScreen(point);MeasurePoint actual=PowerPointHost.MeasurementToSlide(point,d,flattened);
+                        Similar(preview.GetPixel((int)view.X,(int)view.Y),slideImage.GetPixel((int)actual.X,(int)actual.Y),"slide and dialog orientation "+mode+" "+x+","+y);
+                    }
+                    if(mode=="r180")preview.Save(Path.Combine(output,"measurement-orientation-preview.png"));
+                }
+            }
         }
     }
     private static void Integration(string output)
@@ -135,36 +224,37 @@ internal static class MeasurementTests
                 double s=session.Document.Width/1200;MeasurementDocument doc=Demo();doc.Width=session.Document.Width;doc.Height=session.Document.Height;
                 foreach(MeasurementItem i in doc.Items)foreach(MeasurePoint point in i.Points){point.X*=s;point.Y*=s;}
                 doc.Calibrate(Item("line",850*s,710*s,1050*s,710*s),100,"µm");doc.PhotoSignature=session.Document.PhotoSignature;
-                dynamic copy=host.ApplyMeasurements(selected,doc);Check((int)presentation.Slides.Count==2,"duplicate slide");Check((int)slide.Shapes.Count==1,"original slide unchanged");
-                Check((int)copy.Shapes.Count==1&&(int)copy.Shapes.Item(1).Type==6,"native annotations grouped with photo");
-                copy.Export(Path.Combine(output,"measurement-slide.png"),"PNG",1440,1080);
-                dynamic group=copy.Shapes.Item(1);group.Select(-1);selected=host.ReadMeasurementSelection();
+                dynamic unrelated=slide.Shapes.AddTextbox(1,10f,10f,200f,24f);unrelated.TextFrame.TextRange.Text="Unrelated text remains once";
+                dynamic copy=host.ApplyMeasurements(selected,doc);Check((int)presentation.Slides.Count==1,"copy photo without adding a slide");Check((int)slide.Shapes.Count==3,"only one photo group added");
+                Check((int)copy.Type==6,"native annotations grouped with photo");Near((double)photo.Left,50,"original photo position");Check(PowerPointHost.ReadMeasurementData(photo)==null,"original photo tags unchanged");Check((string)unrelated.TextFrame.TextRange.Text=="Unrelated text remains once","other text unchanged");
+                slide.Export(Path.Combine(output,"measurement-slide.png"),"PNG",1440,1080);
+                dynamic group=copy;group.Select(-1);selected=host.ReadMeasurementSelection();
                 MeasurementDocument read=PowerPointHost.ReadMeasurementData(selected.Photos[0].Shape);Near(read.MicronsPerPixel,doc.MicronsPerPixel,"tag calibration");Check(read.Items.Count==5,"tag objects");
                 using(MeasurementSession again=host.CreateMeasurementSession(selected))Check(again.Document.Items.Count==5,"reopen labelled group");
-                dynamic number=host.AddNumberLabel("square",2);Check((string)number.TextFrame2.TextRange.Text=="2","number measured photo");
+                photo.Delete();dynamic number=host.AddNumberLabel("square",2);Check((string)number.TextFrame2.TextRange.Text=="2","number measured photo");
                 dynamic parent=PowerPointHost.TopMeasurementParent(selected.Photos[0].Shape);parent.Select(-1);
                 SelectionSnapshot before=host.ReadMeasurementSelection();double old=before.Photos[0].Width;host.ArrangeAllPhotos();
                 parent.Select(-1);selected=host.ReadMeasurementSelection();Check(selected.Photos[0].Width<old,"smart arrange scaled measured group");
                 using(MeasurementSession resized=host.CreateMeasurementSession(selected)){Near(resized.Document.MicronsPerPixel,doc.MicronsPerPixel,"resize preserves scale");Check(resized.Document.Items.Count==5,"resized document");}
-                dynamic repeat=host.ApplyMeasurements(selected,read);Check((int)presentation.Slides.Count==3,"reapply creates single duplicate");
-                repeat.Shapes.Item(1).Select(-1);SelectionSnapshot latest=host.ReadMeasurementSelection();Check(PowerPointHost.ReadMeasurementData(latest.Photos[0].Shape).Items.Count==5,"reapply no duplicates");
+                string previousNumberGroup=(string)number.ParentGroup.Name;dynamic repeat=host.ApplyMeasurements(selected,read);Check((int)presentation.Slides.Count==1,"reapply stays on same slide");Check((string)number.ParentGroup.Name==previousNumberGroup,"original number label remains in original group");
+                repeat.Select(-1);string repeatName=repeat.Name;SelectionSnapshot latest=host.ReadMeasurementSelection();Check(PowerPointHost.ReadMeasurementData(latest.Photos[0].Shape).Items.Count==5,"reapply no duplicate measurements");
                 string saved=Path.Combine(output,"measurement-validation.pptx");presentation.SaveAs(saved,24);presentation.Close();presentation=null;
-                presentation=app.Presentations.Open(saved,0,0,-1);app.ActiveWindow.View.GotoSlide(3);presentation.Slides.Item(3).Shapes.Item(1).Select(-1);selected=host.ReadMeasurementSelection();
+                presentation=app.Presentations.Open(saved,0,0,-1);app.ActiveWindow.View.GotoSlide(1);presentation.Slides.Item(1).Shapes.Item(repeatName).Select(-1);selected=host.ReadMeasurementSelection();
                 Check(PowerPointHost.ReadMeasurementData(selected.Photos[0].Shape).Items.Count==5,"persist after reopen pptx");
-                host.ResetMeasurements(selected);Check((int)presentation.Slides.Count==4,"reset on duplicate");
-                dynamic resetGroup=presentation.Slides.Item(4).Shapes.Item(1);resetGroup.Select(-1);var resetSelection=host.ReadMeasurementSelection();Check(PowerPointHost.ReadMeasurementData(resetSelection.Photos[0].Shape)==null,"reset removes calibration");Check((int)resetGroup.Type==6,"reset keeps number photo grouped");
+                host.ResetMeasurements(selected);Check((int)presentation.Slides.Count==1,"reset copies only photo");
+                var resetSelection=host.ReadMeasurementSelection();dynamic resetGroup=PowerPointHost.TopMeasurementParent(resetSelection.Photos[0].Shape);Check(PowerPointHost.ReadMeasurementData(resetSelection.Photos[0].Shape)==null,"reset removes calibration");Check((int)resetGroup.Type==6,"reset keeps number photo grouped");
             }
-            dynamic rotated=presentation.Slides.Add(5,12);app.ActiveWindow.View.GotoSlide(5);
+            dynamic rotated=presentation.Slides.Add(2,12);app.ActiveWindow.View.GotoSlide(2);
             dynamic rp=rotated.Shapes.AddPicture(path,0,-1,220f,180f,420f,280f);rp.Name="RotatedCrop";rp.PictureFormat.CropLeft=25f;rp.Flip(0);rp.Rotation=27f;
             dynamic label=host.AddNumberLabel("circle",4);dynamic ng=label.ParentGroup;ng.Rotation=12f;ng.Select(-1);
             selected=host.ReadMeasurementSelection();
             using(MeasurementSession cropped=host.CreateMeasurementSession(selected))
             {
                 var d=cropped.Document;d.Calibrate(Item("line",d.Width*.1,d.Height*.1,d.Width*.3,d.Height*.1),25,"µm");Add(d,Item("line",d.Width*.1,d.Height*.1,d.Width*.3,d.Height*.1));
-                dynamic measured=host.ApplyMeasurements(selected,d);measured.Shapes.Item(1).Select(-1);selected=host.ReadMeasurementSelection();
-                measured.Export(Path.Combine(output,"measurement-rotated-cropped-slide.png"),"PNG",1440,1080);
+                dynamic measured=host.ApplyMeasurements(selected,d);measured.Select(-1);selected=host.ReadMeasurementSelection();
+                rotated.Export(Path.Combine(output,"measurement-rotated-cropped-slide.png"),"PNG",1440,1080);
                 using(MeasurementSession re=host.CreateMeasurementSession(selected))Check(re.Document.Items.Count==1,"cropped flipped rotated labelled group reopens");
-                dynamic gp=measured.Shapes.Item(1);gp.Width=(float)((double)gp.Width*.8);gp.Height=(float)((double)gp.Height*.8);gp.Select(-1);selected=host.ReadMeasurementSelection();
+                dynamic gp=measured;gp.Width=(float)((double)gp.Width*.8);gp.Height=(float)((double)gp.Height*.8);gp.Select(-1);selected=host.ReadMeasurementSelection();
                 using(MeasurementSession re=host.CreateMeasurementSession(selected))Check(re.Document.HasScale,"cropped image resizing preserves calibration");
             }
             dynamic all=presentation.Slides.Add((int)presentation.Slides.Count+1,12);app.ActiveWindow.View.GotoSlide((int)all.SlideIndex);
@@ -175,9 +265,10 @@ internal static class MeasurementTests
                 foreach(var i in new[]{Item("line",50,50,150,150),Item("rect",60,60,200,200),Item("rect3",100,20,150,50,150,120),Item("circle",200,200,250,200),Item("circle3",310,300,300,310,290,300),Item("ellipse",300,100,400,100,350,160),Item("angle",400,100,500,200,550,50),Item("hangle",600,100,650,130),Item("vangle",700,100,740,130),Item("polygon",600,300,650,400,500,400),Item("polyline",700,400,720,420,740,400),Item("lasso",600,500,650,550,600,600,550,550),Item("curve",800,500,850,550,900,500),Item("gap",100,500,200,500,150,550,150,575),Item("pointline",400,600,500,600,450,650),Item("point",800,200),Item("text",900,200),Item("draw",900,400,920,410,930,390),Item("arrow",900,500,970,570)})
                 {if(i.Kind=="text")i.Note="한글 주석 / µm";Add(d,i);}
                 Add(d,new MeasurementItem {Kind="circle_distance",CircleA=4,CircleB=5});
-                dynamic result=host.ApplyMeasurements(selected,d);result.Shapes.Item(1).Select(-1);var actualSelection=host.ReadMeasurementSelection();
+                dynamic result=host.ApplyMeasurements(selected,d);result.Select(-1);var actualSelection=host.ReadMeasurementSelection();
                 Check(PowerPointHost.ReadMeasurementData(actualSelection.Photos[0].Shape).Items.Count==20,"all 20 manual tools exported with editable geometry");
             }
+            Orientation(host,app,presentation,output);
         }
         finally
         {
@@ -186,4 +277,3 @@ internal static class MeasurementTests
         }
     }
 }
-

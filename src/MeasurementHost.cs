@@ -12,6 +12,7 @@ namespace LabPhotoTools
     {
         internal Bitmap Image;
         internal MeasurementDocument Document;
+        internal double Rotation;
         public void Dispose(){if(Image!=null){Image.Dispose();Image=null;}}
     }
     public partial class PowerPointHost
@@ -94,7 +95,9 @@ namespace LabPhotoTools
                 if(picture==null)throw new InvalidOperationException("선택한 사진을 복사본에서 찾지 못했습니다.");
                 List<object> leaves=new List<object>();FlattenMeasurementGroup(TopMeasurementParent(picture),leaves);
                 picture=leaves.Cast<dynamic>().First(s=>IsPhoto(s)&&(string)s.Name==source.Name);
-                picture.Rotation=0f;
+                // Keep canonical measurement coordinates, but display them with
+                // the full slide rotation (including rotation inherited from groups).
+                double rotation=(double)picture.Rotation;picture.Rotation=0f;
                 string signature=MeasurementSignature(picture);double aspect=(double)picture.Width/(double)picture.Height;
                 if(doc!=null&&(Math.Abs(aspect/(doc.Width/doc.Height)-1)>.01||doc.PhotoSignature!=signature))
                     throw new InvalidOperationException("스케일 설정 후 사진의 자르기·뒤집기·가로세로 비율이 바뀌었습니다. 사진을 원래 상태로 되돌리거나 측정 탭의 ‘측정 초기화’로 새로 보정하세요.");
@@ -105,7 +108,7 @@ namespace LabPhotoTools
                 // Shape.Export rounds its pixel dimensions independently.
                 // Retain the exact local aspect ratio for geometric calculations.
                 if(doc==null)doc=new MeasurementDocument {Width=image.Width,Height=image.Width/aspect,PhotoSignature=signature};
-                return new MeasurementSession {Image=image,Document=doc};
+                return new MeasurementSession {Image=image,Document=doc,Rotation=rotation};
             }
             catch{if(image!=null)image.Dispose();throw;}
             finally{if(copy!=null){try{copy.Saved=-1;copy.Close();}catch{}}Engine.CleanJob(directory);}
@@ -118,20 +121,40 @@ namespace LabPhotoTools
         private static int OfficeRgb(int argb){Color c=Color.FromArgb(argb);return c.R|(c.G<<8)|(c.B<<16);}
         private static void MarkMeasurementShape(dynamic shape,string token,MeasurementItem item)
         {shape.Tags.Add("LABPHOTO_MEASUREMENT_OVERLAY",token);shape.Tags.Add("LABPHOTO_MEASUREMENT_ID",item.Id.ToString(CultureInfo.InvariantCulture));shape.Name="LabMeasure_"+item.Id+"_"+shape.Id;}
+        private static HashSet<int> MeasurementShapeIds(dynamic slide)
+        {HashSet<int> ids=new HashSet<int>();for(int i=1;i<=(int)slide.Shapes.Count;i++)ids.Add((int)slide.Shapes.Item(i).Id);return ids;}
+        private static void RollbackMeasurementCopy(dynamic slide,HashSet<int> before)
+        {for(int i=(int)slide.Shapes.Count;i>=1;i--)try{dynamic s=slide.Shapes.Item(i);if(!before.Contains((int)s.Id))s.Delete();}catch{}}
+        private static object CopyMeasurementPhoto(PhotoSnapshot original,List<string> groupNames)
+        {
+            dynamic top=TopMeasurementParent(original.Shape);dynamic copy=top.Duplicate().Item(1);
+            copy.Left=(float)((double)top.Left+18);copy.Top=(float)((double)top.Top+18);
+            dynamic picture=(int)copy.Type==6?FindMeasurementPhoto(copy.GroupItems,original.Name,original.Id):(object)copy;
+            if(picture==null)throw new InvalidOperationException("복사한 사진을 찾지 못했습니다.");
+            // Give the target its own name before ungrouping. A surrounding
+            // group may contain unrelated photos, shapes or text: discard those.
+            string target="LabMeasuredPhoto_"+Guid.NewGuid().ToString("N");picture.Name=target;
+            List<PhotoSnapshot> photos=new List<PhotoSnapshot>();CollectSelectedPhotos(copy,photos);
+            bool keepNumber=photos.Count==1;
+            List<object> leaves=new List<object>();FlattenMeasurementGroup(copy,leaves);
+            foreach(dynamic leaf in leaves)
+            {
+                if((string)leaf.Name==target){picture=leaf;groupNames.Add(target);}
+                else if(keepNumber&&!string.IsNullOrEmpty(TagValue(leaf,"LABPHOTO_NUMBER_STYLE")))
+                {leaf.Name="LabNumber_copy_"+Guid.NewGuid().ToString("N");groupNames.Add((string)leaf.Name);}
+                else leaf.Delete();
+            }
+            return (object)picture;
+        }
         public object ApplyMeasurements(SelectionSnapshot selection,MeasurementDocument document)
         {
             if(selection.Photos.Count!=1||!document.HasScale)throw new InvalidOperationException("사진 한 장과 보정된 스케일이 필요합니다.");
             VerifyUnchanged(selection);MeasurementDocument doc=MeasurementDocument.Deserialize(document.Serialize());
-            app.StartNewUndoEntry();dynamic slide=null;
+            app.StartNewUndoEntry();dynamic slide=selection.Slide;HashSet<int> before=MeasurementShapeIds(slide);
             try
             {
-                slide=((dynamic)selection.Slide).Duplicate().Item(1);PhotoSnapshot original=selection.Photos[0];
-                dynamic picture=FindMeasurementPhoto(slide.Shapes,original.Name,original.Id);
-                if(picture==null)throw new InvalidOperationException("복사본에서 사진을 찾지 못했습니다.");
-                List<object> leaves=new List<object>();FlattenMeasurementGroup(TopMeasurementParent(picture),leaves);
                 List<string> groupNames=new List<string>();
-                foreach(dynamic leaf in leaves)
-                {if(!string.IsNullOrEmpty(TagValue(leaf,"LABPHOTO_MEASUREMENT_OVERLAY")))leaf.Delete();else {groupNames.Add((string)leaf.Name);if(IsPhoto(leaf)&&(string)leaf.Name==original.Name)picture=leaf;}}
+                dynamic picture=CopyMeasurementPhoto(selection.Photos[0],groupNames);
                 PhotoSnapshot photo=SnapshotPhoto(picture);string token=Guid.NewGuid().ToString("N");
                 // Exported pixels already include the photo's flip. Map the
                 // rendered local picture axes through its current rotation.
@@ -160,36 +183,30 @@ namespace LabPhotoTools
                     }
                 }
                 doc.PhotoSignature=MeasurementSignature(picture);WriteMeasurementData(picture,doc);
-                if(groupNames.Count>1)
+                dynamic saved=picture;if(groupNames.Count>1)
                 {
                     dynamic group=slide.Shapes.Range(groupNames.Cast<object>().ToArray()).Group();group.Name="LabMeasurementGroup_"+group.Id;
                     group.Tags.Add("LABPHOTO_MEASUREMENT_GROUP","1");picture.Tags.Add("LABPHOTO_ATTACHED_MEASUREMENT","1");
+                    saved=group;
                 }
-                app.ActiveWindow.View.GotoSlide((int)slide.SlideIndex);return (object)slide;
+                app.ActiveWindow.View.GotoSlide((int)slide.SlideIndex);saved.Select(-1);return (object)saved;
             }
-            catch{if(slide!=null){try{slide.Delete();}catch{}}throw;}
+            catch{RollbackMeasurementCopy(slide,before);throw;}
         }
         public void ResetMeasurements(SelectionSnapshot selection)
         {
-            // Reset on a duplicate, preserving the original calibrated slide.
+            // Keep the original and make a clean photo copy on the same slide.
             if(selection.Photos.Count!=1)throw new InvalidOperationException("사진 한 장을 선택하세요.");VerifyUnchanged(selection);
-            dynamic slide=null;app.StartNewUndoEntry();
+            dynamic slide=selection.Slide;HashSet<int> before=MeasurementShapeIds(slide);app.StartNewUndoEntry();
             try
             {
-                slide=((dynamic)selection.Slide).Duplicate().Item(1);PhotoSnapshot p=selection.Photos[0];dynamic photo=FindMeasurementPhoto(slide.Shapes,p.Name,p.Id);
-                List<object> leaves=new List<object>();FlattenMeasurementGroup(TopMeasurementParent(photo),leaves);
                 List<string> keep=new List<string>();
-                foreach(dynamic leaf in leaves)
-                {
-                    if(!string.IsNullOrEmpty(TagValue(leaf,"LABPHOTO_MEASUREMENT_OVERLAY"))){leaf.Delete();continue;}
-                    keep.Add((string)leaf.Name);
-                    if(IsPhoto(leaf)&&(string)leaf.Name==p.Name){for(int i=(int)leaf.Tags.Count;i>=1;i--){string name=(string)leaf.Tags.Name(i);if(name.StartsWith(MeasurementPrefix,StringComparison.Ordinal)||name=="LABPHOTO_ATTACHED_MEASUREMENT")leaf.Tags.Delete(name);}}
-                }
-                if(keep.Count>1){dynamic group=slide.Shapes.Range(keep.Cast<object>().ToArray()).Group();group.Name="LabNumberGroup_reset_"+group.Id;}
-                app.ActiveWindow.View.GotoSlide((int)slide.SlideIndex);
+                dynamic photo=CopyMeasurementPhoto(selection.Photos[0],keep);
+                for(int i=(int)photo.Tags.Count;i>=1;i--){string name=(string)photo.Tags.Name(i);if(name.StartsWith(MeasurementPrefix,StringComparison.Ordinal)||name=="LABPHOTO_ATTACHED_MEASUREMENT")photo.Tags.Delete(name);}
+                dynamic saved=photo;if(keep.Count>1){saved=slide.Shapes.Range(keep.Cast<object>().ToArray()).Group();saved.Name="LabNumberGroup_reset_"+saved.Id;}
+                app.ActiveWindow.View.GotoSlide((int)slide.SlideIndex);saved.Select(-1);
             }
-            catch{if(slide!=null){try{slide.Delete();}catch{}}throw;}
+            catch{RollbackMeasurementCopy(slide,before);throw;}
         }
     }
 }
-

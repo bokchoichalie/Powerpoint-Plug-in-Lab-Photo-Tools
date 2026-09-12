@@ -11,6 +11,7 @@ namespace LabPhotoTools
     {
         internal MeasurementDocument Document;
         internal Image Source;
+        internal double Rotation;
         internal MeasurementItem Style = new MeasurementItem();
         internal readonly HashSet<int> Selected = new HashSet<int>();
         internal string Tool = "select";
@@ -26,15 +27,19 @@ namespace LabPhotoTools
         private bool dragging, panning, freehand, dragLabel;
         private double zoom = 1;
         private int circleFirst;
+        private Point? precisionMouse;
+        internal MeasurePoint HoverPoint {get{return new MeasurePoint(hover.X,hover.Y);}}
         internal bool HasUnfinishedDrawing {get{return points.Count>0||circleFirst!=0;}}
         private readonly Dictionary<int,List<MeasurePoint>> dragPoints = new Dictionary<int,List<MeasurePoint>>();
         private readonly Dictionary<int,MeasurePoint> dragLabels = new Dictionary<int,MeasurePoint>();
         private readonly Dictionary<int, RectangleF> labelBounds = new Dictionary<int, RectangleF>();
-        internal double ViewScale { get { return Document == null ? 1 : Math.Max(.0001,Math.Min((ClientSize.Width-24)/Document.Width,(ClientSize.Height-24)/Document.Height))*zoom; } }
-        private double OriginX { get { return (ClientSize.Width-Document.Width*ViewScale)/2+pan.X; } }
-        private double OriginY { get { return (ClientSize.Height-Document.Height*ViewScale)/2+pan.Y; } }
-        internal PointF ToScreen(MeasurePoint p) { return new PointF((float)(OriginX+p.X*ViewScale),(float)(OriginY+p.Y*ViewScale)); }
-        internal MeasurePoint ToImage(PointF p) { return new MeasurePoint((p.X-OriginX)/ViewScale,(p.Y-OriginY)/ViewScale); }
+        private double Cos {get{return Math.Cos(Rotation*Math.PI/180);}}
+        private double Sin {get{return Math.Sin(Rotation*Math.PI/180);}}
+        internal double ViewScale { get { return Document == null ? 1 : Math.Max(.0001,Math.Min((ClientSize.Width-24)/(Math.Abs(Cos)*Document.Width+Math.Abs(Sin)*Document.Height),(ClientSize.Height-24)/(Math.Abs(Sin)*Document.Width+Math.Abs(Cos)*Document.Height)))*zoom; } }
+        internal PointF ToScreen(MeasurePoint p)
+        {double x=p.X-Document.Width/2,y=p.Y-Document.Height/2;return new PointF((float)(ClientSize.Width/2.0+pan.X+(x*Cos-y*Sin)*ViewScale),(float)(ClientSize.Height/2.0+pan.Y+(x*Sin+y*Cos)*ViewScale));}
+        internal MeasurePoint ToImage(PointF p)
+        {double x=(p.X-ClientSize.Width/2.0-pan.X)/ViewScale,y=(p.Y-ClientSize.Height/2.0-pan.Y)/ViewScale;return new MeasurePoint(Document.Width/2+x*Cos+y*Sin,Document.Height/2-x*Sin+y*Cos);}
         internal MeasurementCanvas()
         {
             DoubleBuffered=true;TabStop=true;BackColor=Color.FromArgb(28,34,43);Dock=DockStyle.Fill;
@@ -123,7 +128,7 @@ namespace LabPhotoTools
             if(e.Button==MouseButtons.Middle){panning=true;Capture=true;return;}
             if(e.Button==MouseButtons.Right){if(points.Count>0)Finish();else {Tool="select";Notify();}return;}
             if(e.Button!=MouseButtons.Left)return;
-            MeasurePoint p=ToImage(e.Location);hover=p;
+            MeasurePoint p=precisionMouse.HasValue&&e.Location==precisionMouse.Value?HoverPoint:ToImage(e.Location);hover=p;
             if(Tool=="select"||Tool=="erase")
             {
                 MeasurementItem item=Hit(p,false);
@@ -141,11 +146,16 @@ namespace LabPhotoTools
             {if(!Document.HasScale){Tell("먼저 스케일을 맞추세요.");return;}points.Clear();freehand=true;Capture=true;}
             ClickImage(p);
         }
+        protected override void OnMouseEnter(EventArgs e)
+        {base.OnMouseEnter(e);Focus();}
         protected override void OnMouseMove(MouseEventArgs e)
         {
             base.OnMouseMove(e);if(Document==null)return;
             if(panning){pan=pan+new MeasurePoint(e.X-lastMouse.X,e.Y-lastMouse.Y);lastMouse=e.Location;Invalidate();return;}
-            hover=ToImage(e.Location);
+            // Cursor.Position produces an integer screen coordinate. Retain the
+            // exact sub-screen-pixel image coordinate until the mouse really moves.
+            if(precisionMouse.HasValue&&e.Location==precisionMouse.Value)return;
+            precisionMouse=null;hover=ToImage(e.Location);
             if(dragging)
             {
                 MeasurePoint d=hover-dragStart;
@@ -164,7 +174,7 @@ namespace LabPhotoTools
         {base.OnMouseUp(e);if(freehand){freehand=false;Finish();}if(dragging)Notify();panning=dragging=false;Capture=false;}
         protected override void OnMouseWheel(MouseEventArgs e) {base.OnMouseWheel(e);ZoomAt(e.Location,e.Delta>0?1.25:.8);}
         protected override bool IsInputKey(Keys keyData)
-        {Keys k=keyData&Keys.KeyCode;if(k==Keys.Left||k==Keys.Right||k==Keys.Up||k==Keys.Down)return true;return base.IsInputKey(keyData);}
+        {Keys k=keyData&Keys.KeyCode;if(k==Keys.Left||k==Keys.Right||k==Keys.Up||k==Keys.Down||k==Keys.Enter||k==Keys.Escape)return true;return base.IsInputKey(keyData);}
         protected override void OnKeyDown(KeyEventArgs e)
         {
             base.OnKeyDown(e);if(Document==null)return;e.Handled=true;
@@ -173,11 +183,26 @@ namespace LabPhotoTools
             if(e.KeyCode==Keys.Delete){if(e.Shift)ClearAll();else DeleteSelected();return;}
             if(e.KeyCode==Keys.Escape){CancelDrawing();Tool="select";Notify();return;}
             if(e.KeyCode==Keys.Enter){if(points.Count>0&&(Tool=="polygon"||Tool=="curve"||Tool=="polyline"||Tool=="gap"||Tool=="pointline"))Finish();else ClickImage(new MeasurePoint(hover.X,hover.Y));return;}
+            if(e.Control||e.Alt){e.Handled=false;return;}
             double step=e.Shift?10:1,dx=0,dy=0;
             if(e.KeyCode==Keys.A||e.KeyCode==Keys.Left)dx=-step;else if(e.KeyCode==Keys.D||e.KeyCode==Keys.Right)dx=step;
             else if(e.KeyCode==Keys.W||e.KeyCode==Keys.Up)dy=-step;else if(e.KeyCode==Keys.S||e.KeyCode==Keys.Down)dy=step;
             else {e.Handled=false;return;}
-            hover=new MeasurePoint(Math.Max(0,Math.Min(Document.Width,hover.X+dx)),Math.Max(0,Math.Min(Document.Height,hover.Y+dy)));
+            NudgeCursor(dx,dy);e.SuppressKeyPress=true;
+        }
+        internal void NudgeCursor(double dx,double dy)
+        {
+            if(Document==null||Source==null)return;
+            // One pixel of the loaded image, independent of zoom and a saved
+            // document's coordinate extent. Directions follow the visible photo.
+            double px=Document.Width/Source.Width,py=Document.Height/Source.Height;
+            hover=new MeasurePoint(Math.Max(0,Math.Min(Document.Width-px,hover.X+(dx*Cos+dy*Sin)*px)),Math.Max(0,Math.Min(Document.Height-py,hover.Y+(-dx*Sin+dy*Cos)*py)));
+            PointF screen=ToScreen(hover);
+            // Keep a nudged point in view even when zoomed into an image edge.
+            float sx=Math.Max(8,Math.Min(ClientSize.Width-9,screen.X)),sy=Math.Max(8,Math.Min(ClientSize.Height-9,screen.Y));
+            pan=pan+new MeasurePoint(sx-screen.X,sy-screen.Y);screen=ToScreen(hover);
+            precisionMouse=System.Drawing.Point.Round(screen);
+            if(IsHandleCreated&&Focused)System.Windows.Forms.Cursor.Position=PointToScreen(precisionMouse.Value);
             if(HoverChanged!=null)HoverChanged(hover);Invalidate();
         }
         private MeasurementItem Hit(MeasurePoint p,bool circlesOnly)
@@ -200,7 +225,9 @@ namespace LabPhotoTools
         {
             base.OnPaint(e);if(Document==null||Source==null)return;
             Graphics g=e.Graphics;g.SmoothingMode=SmoothingMode.AntiAlias;g.InterpolationMode=zoom>3?InterpolationMode.NearestNeighbor:InterpolationMode.HighQualityBicubic;
-            g.DrawImage(Source,new RectangleF((float)OriginX,(float)OriginY,(float)(Document.Width*ViewScale),(float)(Document.Height*ViewScale)));
+            // Draw the exported local image through the same transform as the
+            // measurement points. PowerPoint's flips are already in the pixels.
+            g.DrawImage(Source,new[]{ToScreen(new MeasurePoint(0,0)),ToScreen(new MeasurePoint(Document.Width,0)),ToScreen(new MeasurePoint(0,Document.Height))});
             labelBounds.Clear();
             foreach(MeasurementItem item in Document.Items)DrawItem(g,item,Selected.Contains(item.Id),false);
             if(points.Count>0)
@@ -239,16 +266,15 @@ namespace LabPhotoTools
     }
     internal sealed class MeasurementMagnifier : Control
     {
-        internal Image Source;internal MeasurePoint Point;internal MeasurementDocument Document;
+        internal Image Source;internal MeasurePoint Point;internal MeasurementDocument Document;internal double Rotation;
         internal MeasurementMagnifier(){DoubleBuffered=true;BackColor=Color.FromArgb(28,34,43);}
         protected override void OnPaint(PaintEventArgs e)
         {
             base.OnPaint(e);if(Source==null||Point==null||Document==null)return;
             double sx=Source.Width/Document.Width,sy=Source.Height/Document.Height;
-            RectangleF source=new RectangleF((float)(Point.X*sx-ClientSize.Width/12.0),(float)(Point.Y*sy-ClientSize.Height/12.0),ClientSize.Width/6f,ClientSize.Height/6f);
-            e.Graphics.InterpolationMode=InterpolationMode.NearestNeighbor;e.Graphics.DrawImage(Source,ClientRectangle,source,GraphicsUnit.Pixel);
+            Graphics g=e.Graphics;GraphicsState saved=g.Save();g.TranslateTransform(ClientSize.Width/2f,ClientSize.Height/2f);g.RotateTransform((float)Rotation);g.ScaleTransform(6,6);g.TranslateTransform((float)(-Point.X*sx),(float)(-Point.Y*sy));
+            g.InterpolationMode=InterpolationMode.NearestNeighbor;g.PixelOffsetMode=PixelOffsetMode.Half;g.DrawImage(Source,new Rectangle(0,0,Source.Width,Source.Height));g.Restore(saved);
             e.Graphics.DrawLine(Pens.Cyan,Width/2,0,Width/2,Height);e.Graphics.DrawLine(Pens.Cyan,0,Height/2,Width,Height/2);
         }
     }
 }
-

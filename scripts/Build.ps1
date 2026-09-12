@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param()
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
@@ -10,5 +10,4 @@ $references = @('System.dll','System.Core.dll','Microsoft.CSharp.dll','System.Dr
 $sources = @(Get-ChildItem -LiteralPath (Join-Path $root 'src') -Filter '*.cs' -File | ForEach-Object FullName)
 & (Join-Path $framework 'csc.exe') /nologo /target:library /platform:anycpu /optimize+ /langversion:5 ('/out:' + (Join-Path $build 'LabPhotoTools.dll')) $references $sources
 if ($LASTEXITCODE -ne 0) { throw 'C# build failed.' }
-Write-Output 'Built LabPhotoTools 0.1.12'
-
+Write-Output 'Built LabPhotoTools 0.1.13'
