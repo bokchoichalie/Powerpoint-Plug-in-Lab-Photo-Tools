@@ -1,4 +1,4 @@
-﻿Lab Photo Tools 0.1.14 설치 및 업데이트
+﻿Lab Photo Tools 0.1.15 설치 및 업데이트
 
 [이미 설치한 PC]
 1. PowerPoint 파일을 저장하고 모든 PowerPoint 창을 닫습니다.

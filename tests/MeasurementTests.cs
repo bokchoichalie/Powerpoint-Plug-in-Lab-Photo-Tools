@@ -80,6 +80,23 @@ internal static class MeasurementTests
     private static IEnumerable<Control> Children(Control root){foreach(Control c in root.Controls){yield return c;foreach(Control child in Children(c))yield return child;}}
     private static void Reveal(Control child)
     {for(Control p=child.Parent;p!=null;p=p.Parent){ScrollableControl viewport=p as ScrollableControl;if(viewport!=null&&viewport.AutoScroll)viewport.ScrollControlIntoView(child);}Application.DoEvents();}
+    private static void CheckButtonGrids(Form form)
+    {
+        foreach(Button button in Children(form).OfType<Button>())Check(button.Height>=TextRenderer.MeasureText(button.Text,button.Font).Height+button.Padding.Vertical,"clickable button height: "+button.Text);
+        foreach(FlowLayoutPanel grid in Children(form).OfType<FlowLayoutPanel>().Where(p=>p.Name=="MeasurementToolGrid"||p.Name=="MeasurementEditGrid"))
+        {
+            Button[] buttons=grid.Controls.OfType<Button>().ToArray();
+            Check(buttons.Length==(grid.Name=="MeasurementToolGrid"?20:8),"all tool/edit actions present");
+            Check(buttons.Select(b=>b.Size).Distinct().Count()==1,"uniform grid button sizes");
+            foreach(var row in buttons.GroupBy(b=>b.Top))Check(row.Count()==4,"four buttons in every row");
+            foreach(Button b in buttons)
+            {
+                Check(b.Width>=b.GetPreferredSize(Size.Empty).Width,"button caption fits: "+b.Text);
+                Check(b.Height>=TextRenderer.MeasureText(b.Text,b.Font).Height+b.Padding.Vertical,"button caption height: "+b.Text);
+            }
+            for(int n=4;n<buttons.Length;n++)Check(buttons[n].Left==buttons[n%4].Left,"tool columns align");
+        }
+    }
     private static void Input(Control c,string method,EventArgs args)
     {c.GetType().GetMethod(method,BindingFlags.Instance|BindingFlags.NonPublic).Invoke(c,new object[]{args});}
     private static void PrecisionKeys()
@@ -132,6 +149,7 @@ internal static class MeasurementTests
             foreach(Size size in new[]{new Size(780,520),new Size(1024,680),new Size(1280,830),new Size(360,340)})
             {
                 form.MinimumSize=Size.Empty;form.ClientSize=size;Application.DoEvents();
+                CheckButtonGrids(form);
                 foreach(TableLayoutPanel panel in Children(form).OfType<TableLayoutPanel>())
                 {var children=panel.Controls.Cast<Control>().Where(c=>c.Visible).ToList();for(int i=0;i<children.Count;i++)for(int j=i+1;j<children.Count;j++)Check(!children[i].Bounds.IntersectsWith(children[j].Bounds),"dialog overlaps at "+size+" "+children[i].Text+" / "+children[j].Text);}
                 Check(form.Canvas.Width>120&&form.Canvas.Height>80,"canvas visible at "+size+": "+form.Canvas.Size+" body="+form.Canvas.Parent.Size);
@@ -154,6 +172,7 @@ internal static class MeasurementTests
             foreach(Size size in new[]{new Size(780,520),new Size(1340,700),new Size(1900,1000)})
             {
                 form.MinimumSize=Size.Empty;form.ClientSize=size;Application.DoEvents();
+                CheckButtonGrids(form);
                 foreach(TableLayoutPanel panel in Children(form).OfType<TableLayoutPanel>())
                 {var controls=panel.Controls.Cast<Control>().Where(c=>c.Visible).ToList();for(int i=0;i<controls.Count;i++)for(int j=i+1;j<controls.Count;j++)Check(!controls[i].Bounds.IntersectsWith(controls[j].Bounds),"DPI overlap "+scale+" at "+size+" "+controls[i].GetType().Name+" "+controls[i].Text+" "+controls[i].Bounds+" / "+controls[j].GetType().Name+" "+controls[j].Text+" "+controls[j].Bounds);}
                 Button apply=Children(form).OfType<Button>().Single(b=>b.Text=="측정 사진 복사");
@@ -170,10 +189,16 @@ internal static class MeasurementTests
         using(MeasurementForm form=new MeasurementForm(new PowerPointHost(new object()),new SelectionSnapshot(),new MeasurementSession {Image=TestImage(900),Document=new MeasurementDocument {Width=1200,Height=900}}))
         {
             form.Show();Application.DoEvents();
-            form.ClientSize=new Size(3650,1860);Application.DoEvents();
+            // Capture the actual monitor; Windows clamps oversized native windows
+            // when this test runs on a smaller display than the old 4K reference.
+            CheckButtonGrids(form);
             double width=1200*form.Canvas.ViewScale,height=900*form.Canvas.ViewScale;
-            File.WriteAllText(Path.Combine(output,"measurement-photo-size.txt"),"Client="+form.ClientSize+" Canvas="+form.Canvas.Size+" Photo="+width.ToString("0")+"x"+height.ToString("0")+" ComparedToScreenshot="+(width/1407).ToString("0.000")+"x width / "+(width*height/(1407*1055.0)).ToString("0.000")+"x area");
-            Check(width>1407*1.65&&height>1055*1.65,"4:3 photo at least 65% larger than supplied screenshot");
+            File.WriteAllText(Path.Combine(output,"measurement-photo-size.txt"),"Client="+form.ClientSize+" Canvas="+form.Canvas.Size+" Photo="+width.ToString("0")+"x"+height.ToString("0"));
+            Check(form.Canvas.Height>=form.ClientSize.Height-40,"photo retains full-height canvas");
+            Check(width<=form.Canvas.Width&&height<=form.Canvas.Height,"entire photo fits the canvas");
+            Check(width>=form.Canvas.Width-30||height>=form.Canvas.Height-30,"photo fills available width or height");
+            Button save=Children(form).OfType<Button>().Single(b=>b.Text=="측정 사진 복사");
+            Reveal(save);Check(form.ClientRectangle.Contains(form.RectangleToClient(save.RectangleToScreen(save.ClientRectangle))),"native monitor save accessible");
             using(Bitmap shot=new Bitmap(form.Width,form.Height)){form.DrawToBitmap(shot,new Rectangle(Point.Empty,shot.Size));shot.Save(Path.Combine(output,"measurement-dialog-large-dpi.png"));}
             form.Close();
         }

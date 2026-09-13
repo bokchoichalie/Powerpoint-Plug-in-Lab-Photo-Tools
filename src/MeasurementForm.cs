@@ -28,6 +28,9 @@ namespace LabPhotoTools
         private readonly TextBox annotation=new TextBox {Width=260,Text="메모",AccessibleName="주석 텍스트"};
         private readonly ListView results=new ListView {View=View.Details,FullRowSelect=true,MultiSelect=true,HideSelection=false,Dock=DockStyle.Top,Height=185};
         private readonly List<Button> toolButtons=new List<Button>();
+        private readonly List<Button> compactButtons=new List<Button>();
+        private readonly Dictionary<Button,string> iconKinds=new Dictionary<Button,string>();
+        private readonly List<FlowLayoutPanel> buttonGrids=new List<FlowLayoutPanel>();
         private readonly ToolTip tips=new ToolTip();
         private MeasurementItem pendingCalibration;
         private bool reflowing,refreshing;
@@ -72,9 +75,9 @@ namespace LabPhotoTools
             tips.SetToolTip(actual,"스케일바의 실제 길이. 평행선은 간격, 3점원은 지름입니다.");
         }
         private static FlowLayoutPanel Flow(){return new FlowLayoutPanel {AutoSize=true,AutoSizeMode=AutoSizeMode.GrowAndShrink,Dock=DockStyle.Top,WrapContents=true,Margin=Padding.Empty};}
-        private Label Label(string text,bool bold){return new Label {Text=text,AutoSize=true,Margin=new Padding(4,8,4,5),Font=bold?new Font(Font,FontStyle.Bold):Font};}
+        private Label Label(string text,bool bold){return new Label {Text=text,AutoSize=true,Margin=new Padding(4,5,4,3),Font=bold?new Font(Font,FontStyle.Bold):Font};}
         private Button Button(string text,Action action)
-        {Button b=new Button {Text=text,AutoSize=true,AutoSizeMode=AutoSizeMode.GrowAndShrink,Padding=new Padding(6,5,6,5),Margin=new Padding(3),FlatStyle=FlatStyle.Flat,BackColor=Color.White};b.Click+=delegate{try{action();}catch(Exception ex){status.Text=ex.Message;}};return b;}
+        {Button b=new Button {Text=text,AutoSize=false,Padding=new Padding(3,2,3,2),Margin=new Padding(2),FlatStyle=FlatStyle.Flat,BackColor=Color.White};compactButtons.Add(b);b.Click+=delegate{try{action();}catch(Exception ex){status.Text=ex.Message;}};return b;}
         private void Add(Control control){int row=settings.Controls.Count;settings.RowStyles.Add(new RowStyle(SizeType.AutoSize));settings.Controls.Add(control,0,row);settings.RowCount=row+1;}
         private void AddCalibration(Control control){int row=calibrationValues.Controls.Count;calibrationValues.RowStyles.Add(new RowStyle(SizeType.AutoSize));calibrationValues.Controls.Add(control,0,row);calibrationValues.RowCount=row+1;}
         private void BuildSettings()
@@ -87,13 +90,13 @@ namespace LabPhotoTools
             {string k=kind;Button b=Button(k=="line"?"선":k=="gap"?"평행선":"3점원",delegate{ChooseTool(k,true);});SetImage(b,k);calibrationTools.Controls.Add(b);}
             AddCalibration(calibrationTools);AddCalibration(Label("실제 길이",false));FlowLayoutPanel scaleRow=Flow();actual.AccessibleName="스케일 실제 길이";units.AccessibleName="스케일 단위";scaleRow.Controls.Add(actual);units.Items.AddRange(new object[]{"nm","µm","mm","cm"});units.SelectedItem=Canvas.Document.Unit;scaleRow.Controls.Add(units);AddCalibration(scaleRow);
             FlowLayoutPanel scaleActions=Flow();scaleActions.Controls.Add(Button("스케일 적용",ApplyScale));scaleActions.Controls.Add(Button("표시 단위 변경",delegate{Canvas.PushUndo();Canvas.Document.Unit=(string)units.SelectedItem;RefreshResults();}));AddCalibration(scaleActions);AddCalibration(scaleStatus);
-            Add(Label("2. 측정 도구",true));FlowLayoutPanel tools=Flow();
+            Add(Label("2. 측정 도구",true));FlowLayoutPanel tools=Flow();tools.Name="MeasurementToolGrid";buttonGrids.Add(tools);
             foreach(KeyValuePair<string,string> pair in MeasurementGeometry.Names)
             {
                 string k=pair.Key;Button b=Button(pair.Value,delegate{ChooseTool(k,false);});b.Tag=k;SetImage(b,k);tools.Controls.Add(b);toolButtons.Add(b);
                 tips.SetToolTip(b,Hint(k));
             }
-            Add(tools);FlowLayoutPanel edit=Flow();
+            Add(tools);FlowLayoutPanel edit=Flow();edit.Name="MeasurementEditGrid";buttonGrids.Add(edit);
             edit.Controls.Add(Button("선택·이동",delegate{ChooseTool("select",false);}));edit.Controls.Add(Button("전체 선택",Canvas.SelectAll));
             edit.Controls.Add(Button("지우개",delegate{ChooseTool("erase",false);}));edit.Controls.Add(Button("선택 삭제",Canvas.DeleteSelected));
             edit.Controls.Add(Button("전체 삭제",Canvas.ClearAll));edit.Controls.Add(Button("실행 취소",Canvas.Undo));edit.Controls.Add(Button("다시 실행",Canvas.Redo));
@@ -168,27 +171,52 @@ namespace LabPhotoTools
             finally{refreshing=false;}
         }
         private void SetImage(Button button,string kind)
-        {Bitmap image=MeasurementIcons.Draw(kind,24);buttonImages.Add(image);button.Image=image;button.TextImageRelation=TextImageRelation.ImageBeforeText;}
+        {iconKinds.Add(button,kind);Bitmap image=MeasurementIcons.Draw(kind,18);buttonImages.Add(image);button.Image=image;button.TextImageRelation=TextImageRelation.ImageBeforeText;}
+        private static int CompactButtonWidth(Button button)
+        {return button.GetPreferredSize(Size.Empty).Width;}
+        private void SizeButtons(float scale)
+        {
+            int iconSize=Math.Max(1,(int)Math.Round(18*scale));
+            foreach(KeyValuePair<Button,string> pair in iconKinds)
+            {
+                if(pair.Key.Image.Width==iconSize)continue;
+                Image old=pair.Key.Image;Bitmap image=MeasurementIcons.Draw(pair.Value,iconSize);
+                pair.Key.Image=image;buttonImages.Remove(old);old.Dispose();buttonImages.Add(image);
+            }
+            int height=Math.Max((int)Math.Ceiling(28*scale),compactButtons.Max(b=>TextRenderer.MeasureText(b.Text,b.Font).Height)+(int)Math.Ceiling(8*scale));
+            foreach(Button b in compactButtons)
+            {
+                b.MaximumSize=Size.Empty;b.Margin=new Padding((int)Math.Ceiling(2*scale));b.Padding=new Padding((int)Math.Ceiling(3*scale),(int)Math.Ceiling(2*scale),(int)Math.Ceiling(3*scale),(int)Math.Ceiling(2*scale));
+                b.Size=new Size(Math.Max((int)Math.Ceiling(70*scale),CompactButtonWidth(b)),height);
+            }
+            int calibrationWidth=calibrationTools.Controls.OfType<Button>().Max(b=>b.Width);
+            foreach(Button b in calibrationTools.Controls)b.Width=calibrationWidth;
+        }
         private void Reflow()
         {
-            if(reflowing)return;reflowing=true;
+            if(reflowing||Disposing||IsDisposed)return;reflowing=true;
             try
             {
                 float scale;
                 using(Graphics g=CreateGraphics())using(Font baseline=new Font("맑은 고딕",9.5f))
                     scale=Math.Max(DeviceDpi/96f,Font.GetHeight(g)/baseline.GetHeight(96));
+                SizeButtons(scale);
                 actual.Width=TextRenderer.MeasureText("1000000000.000000",actual.Font).Width+(int)(32*scale);units.Width=Math.Max((int)(78*scale),TextRenderer.MeasureText("mm",units.Font).Width+(int)(36*scale));
                 int loupeWidth=Math.Max(4,(int)(160*scale)/4*4);magnifier.Size=new Size(loupeWidth,loupeWidth*3/4);
                 int valuesWidth=Math.Max(actual.Width+actual.Margin.Horizontal+units.Width+units.Margin.Horizontal,
-                    calibrationTools.Controls.Cast<Control>().Sum(c=>c.PreferredSize.Width+c.Margin.Horizontal));
+                    calibrationTools.Controls.Cast<Control>().Sum(c=>c.Width+c.Margin.Horizontal));
                 valuesWidth+=8;int minimumWidth=valuesWidth+loupeWidth+magnifier.Margin.Horizontal+settings.Padding.Horizontal;
+                // Keep every tool and edit row on the same four-column grid.
+                // Retain readable labels at high DPI; the sidebar can scroll.
+                int cellMinimum=buttonGrids.SelectMany(p=>p.Controls.OfType<Button>()).Max(b=>CompactButtonWidth(b)+b.Margin.Horizontal);
+                minimumWidth=Math.Max(minimumWidth,cellMinimum*4+settings.Padding.Horizontal);
                 // Only the sidebar scrolls, even on a small display. The image
                 // keeps the entire available height and never moves below panels.
                 int available=Math.Max(1,root.ClientSize.Width-root.Padding.Horizontal);
                 int desired=Math.Max(minimumWidth+SystemInformation.VerticalScrollBarWidth,(int)Math.Min(available*.30,600*scale));
                 int right=Math.Min(desired,(int)(available*.48));root.ColumnStyles[1].Width=Math.Max(1,right);
-                foreach(Button b in footer.Controls.OfType<Button>())b.MaximumSize=new Size(Math.Max(60,right-b.Margin.Horizontal),0);
-                bool scrollFooter=footer.GetPreferredSize(new Size(Math.Max(1,right),0)).Height>Math.Max(80,(root.ClientSize.Height-root.Padding.Vertical)*.35);
+                bool scrollFooter=footer.Controls.OfType<Button>().Any(b=>b.Width+b.Margin.Horizontal>right)
+                    ||footer.GetPreferredSize(new Size(Math.Max(1,right),0)).Height>Math.Max(80,(root.ClientSize.Height-root.Padding.Vertical)*.35);
                 if(scrollFooter!=footerInScroll)
                 {
                     if(scrollFooter)Add(footer);
@@ -198,6 +226,8 @@ namespace LabPhotoTools
                 int contentWidth=Math.Max(minimumWidth,settingsViewport.ClientSize.Width-1);
                 settings.Width=contentWidth;
                 int bandWidth=contentWidth-settings.Padding.Horizontal;
+                foreach(FlowLayoutPanel grid in buttonGrids)
+                    foreach(Button b in grid.Controls)b.Width=bandWidth/4-b.Margin.Horizontal;
                 calibrationBand.ColumnStyles[1].Width=loupeWidth+magnifier.Margin.Horizontal;
                 int columnWidth=bandWidth-loupeWidth-magnifier.Margin.Horizontal;scaleStatus.MaximumSize=new Size(Math.Max(1,columnWidth-scaleStatus.Margin.Horizontal),0);
                 int calibrationHeight=calibrationValues.Controls.Cast<Control>().Sum(c=>c.GetPreferredSize(new Size(Math.Max(1,columnWidth-c.Margin.Horizontal),0)).Height+c.Margin.Vertical);
@@ -222,7 +252,7 @@ namespace LabPhotoTools
             finally{UseWaitCursor=false;if(!IsDisposed)apply.Enabled=true;}
         }
         protected override void Dispose(bool disposing)
-        {if(disposing){Canvas.Source=null;magnifier.Source=null;session.Dispose();tips.Dispose();foreach(Image image in buttonImages)image.Dispose();}base.Dispose(disposing);}
+        {if(disposing){reflowing=true;Canvas.Source=null;magnifier.Source=null;session.Dispose();tips.Dispose();foreach(Image image in buttonImages)image.Dispose();}base.Dispose(disposing);}
     }
     internal static class MeasurementIcons
     {
