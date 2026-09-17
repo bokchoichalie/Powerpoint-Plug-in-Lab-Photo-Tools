@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
@@ -38,7 +38,7 @@ internal static class MeasurementTests
         try
         {
             Application.SetUnhandledExceptionMode(UnhandledExceptionMode.ThrowException);
-            Directory.CreateDirectory(args[0]);Geometry();Application.EnableVisualStyles();CanvasAndDialog(args[0]);
+            Directory.CreateDirectory(args[0]);Geometry();SplineGeometry();Application.EnableVisualStyles();PointEditing(args[0]);CanvasAndDialog(args[0]);
             if(args.Contains("--powerpoint"))Integration(args[0]);
             Console.WriteLine("PASS: "+checks+" measurement assertions.");return 0;
         }
@@ -78,6 +78,57 @@ internal static class MeasurementTests
         Check(xml.SelectSingleNode("//r:tab[@id='labMeasurementTab']",ns)==null,"no separate measurement tab");
     }
     private static IEnumerable<Control> Children(Control root){foreach(Control c in root.Controls){yield return c;foreach(Control child in Children(c))yield return child;}}
+    private static void SplineGeometry()
+    {
+        var d=new MeasurementDocument {Width=1200,Height=800,MicronsPerPixel=.5};
+        var curve=new MeasurementItem {Kind="ncurve"};
+        for(int i=0;i<32;i++){double t=2*Math.PI*i/32;curve.Points.Add(new MeasurePoint(300+100*Math.Cos(t),300+100*Math.Sin(t)));}
+        Add(d,curve);var r=MeasurementGeometry.Build(curve,d);
+        Check(Math.Abs(r.Area/(Math.PI*10000)-1)<.001,"sampled n-point circular contour area");
+        Check(Math.Abs(r.Length/(Math.PI*200)-1)<.001,"sampled n-point circular contour perimeter");
+        Check(r.Paths[0].Closed&&curve.Points.All(p=>r.Paths[0].Points.Any(q=>MeasurementGeometry.Distance(p,q)<1e-8)),"smooth contour passes through every anchor");
+        MeasurementSpline.EnsureTangents(curve);curve.Tangents[0]=new MeasurePoint(0,30);
+        var read=MeasurementDocument.Deserialize(d.Serialize());Near(read.Items[0].Tangents[0].Y,30,"edited curvature persisted");Near(MeasurementGeometry.Build(read.Items[0],read).Area,MeasurementGeometry.Build(curve,d).Area,"restored contour area");
+        var square=Item("ncurve",10,10,110,10,110,110,10,110);square.Tangents=Enumerable.Range(0,4).Select(i=>new MeasurePoint()).ToList();
+        Near(MeasurementGeometry.Build(square,d).Area,10000,"corner handles exact square area");Near(MeasurementGeometry.Build(square,d).Length,400,"corner handles exact perimeter");
+        bool rejected=false;try{MeasurementGeometry.Build(Item("ncurve",10,10,10,10,20,40),d);}catch(InvalidOperationException){rejected=true;}Check(rejected,"repeated contour anchor rejected");
+    }
+    private static void DragPoint(MeasurementCanvas canvas,MeasurePoint from,MeasurePoint to,bool release)
+    {
+        Point a=Point.Round(canvas.ToScreen(from)),b=Point.Round(canvas.ToScreen(to));
+        Input(canvas,"OnMouseDown",new MouseEventArgs(MouseButtons.Left,1,a.X,a.Y,0));
+        Input(canvas,"OnMouseMove",new MouseEventArgs(MouseButtons.Left,0,b.X,b.Y,0));
+        if(release)Input(canvas,"OnMouseUp",new MouseEventArgs(MouseButtons.Left,1,b.X,b.Y,0));
+    }
+    private static void PointEditing(string output)
+    {
+        using(Form form=new Form {ClientSize=new Size(960,680)})using(Bitmap bitmap=TestImage())
+        using(MeasurementCanvas c=new MeasurementCanvas {Source=bitmap,Document=Demo()})
+        {
+            form.Controls.Add(c);form.Show();Application.DoEvents();c.SetTool("ncurve",false);
+            foreach(var point in new[]{new MeasurePoint(460,120),new MeasurePoint(660,50),new MeasurePoint(860,150),new MeasurePoint(730,320),new MeasurePoint(560,280)})c.ClickImage(point);
+            Check(c.HasUnfinishedDrawing,"n-point contour awaits completion");Input(c,"OnKeyDown",new KeyEventArgs(Keys.Enter));
+            Check(c.Document.Items.Count==6&&!c.HasUnfinishedDrawing,"Enter closes n-point contour");
+            var item=c.Document.Items.Last();int id=item.Id;c.BeginPointEdit();string before=c.Document.Serialize();
+            DragPoint(c,item.Points[0],new MeasurePoint(390,170),true);item=c.Document.Items.Last();
+            Check(item.Points[0].X<410&&item.Points[0].Y>150,"anchor drag updates geometry");
+            c.Undo();Check(c.Document.Serialize()==before,"point edit undo restores exact geometry");c.Redo();
+            c.Selected.Add(id);c.BeginPointEdit();item=c.Document.Items.Last();MeasurementSpline.EnsureTangents(item);
+            var handle=item.Points[0]+item.Tangents[0];double area=MeasurementGeometry.Build(item,c.Document).Area;
+            DragPoint(c,handle,handle+new MeasurePoint(-30,-50),true);item=c.Document.Items.Last();
+            Check(Math.Abs(MeasurementGeometry.Build(item,c.Document).Area-area)>10,"curvature handle changes measured area");
+            string edited=c.Document.Serialize();DragPoint(c,item.Points[1],new MeasurePoint(640,150),false);Input(c,"OnKeyDown",new KeyEventArgs(Keys.Escape));
+            Check(c.Document.Serialize()==edited,"Escape rolls back in-progress point edit");
+            c.Selected.Clear();c.Selected.Add(id);c.BeginPointEdit();item=c.Document.Items.Last();DragPoint(c,item.Points[0],item.Points[0],true);c.SetPointCurvature(true);
+            Near(MeasurementGeometry.Distance(c.Document.Items.Last().Tangents[0],new MeasurePoint()),0,"corner point");c.SetPointCurvature(false);
+            Check(MeasurementGeometry.Distance(c.Document.Items.Last().Tangents[0],new MeasurePoint())>0,"restore automatic curvature");
+            using(Bitmap shot=new Bitmap(form.Width,form.Height)){form.DrawToBitmap(shot,new Rectangle(Point.Empty,shot.Size));shot.Save(Path.Combine(output,"measurement-point-editing.png"));}
+            c.Selected.Clear();c.Selected.Add(1);c.BeginPointEdit();var line=c.Document.Items[0];double length=MeasurementGeometry.Build(line,c.Document).Length;
+            DragPoint(c,line.Points[1],line.Points[1]+new MeasurePoint(100,0),true);
+            Check(MeasurementGeometry.Build(c.Document.Items[0],c.Document).Length>length+80,"existing line endpoint editable");
+            form.Close();
+        }
+    }
     private static void Reveal(Control child)
     {for(Control p=child.Parent;p!=null;p=p.Parent){ScrollableControl viewport=p as ScrollableControl;if(viewport!=null&&viewport.AutoScroll)viewport.ScrollControlIntoView(child);}Application.DoEvents();}
     private static void CheckButtonGrids(Form form)
@@ -86,7 +137,7 @@ internal static class MeasurementTests
         foreach(FlowLayoutPanel grid in Children(form).OfType<FlowLayoutPanel>().Where(p=>p.Name=="MeasurementToolGrid"||p.Name=="MeasurementEditGrid"))
         {
             Button[] buttons=grid.Controls.OfType<Button>().ToArray();
-            Check(buttons.Length==(grid.Name=="MeasurementToolGrid"?20:8),"all tool/edit actions present");
+            Check(buttons.Length==(grid.Name=="MeasurementToolGrid"?24:8),"all tool/edit actions present");
             Check(buttons.Select(b=>b.Size).Distinct().Count()==1,"uniform grid button sizes");
             foreach(var row in buttons.GroupBy(b=>b.Top))Check(row.Count()==4,"four buttons in every row");
             foreach(Button b in buttons)
@@ -177,7 +228,7 @@ internal static class MeasurementTests
                 {var controls=panel.Controls.Cast<Control>().Where(c=>c.Visible).ToList();for(int i=0;i<controls.Count;i++)for(int j=i+1;j<controls.Count;j++)Check(!controls[i].Bounds.IntersectsWith(controls[j].Bounds),"DPI overlap "+scale+" at "+size+" "+controls[i].GetType().Name+" "+controls[i].Text+" "+controls[i].Bounds+" / "+controls[j].GetType().Name+" "+controls[j].Text+" "+controls[j].Bounds);}
                 Button apply=Children(form).OfType<Button>().Single(b=>b.Text=="측정 사진 복사");
                 Reveal(apply);
-                Check(form.ClientRectangle.Contains(form.RectangleToClient(apply.RectangleToScreen(apply.ClientRectangle))),"DPI apply reachable by scroll "+scale+" at "+size);
+                Check(form.ClientRectangle.Contains(form.RectangleToClient(apply.RectangleToScreen(apply.ClientRectangle))),"DPI apply reachable by scroll "+scale+" at "+size+" actual="+form.ClientSize+" apply="+form.RectangleToClient(apply.RectangleToScreen(apply.ClientRectangle))+" parent="+apply.Parent.Bounds+" viewport="+apply.Parent.Parent.Bounds);
                 Check(form.Canvas.Height>=45,"DPI canvas remains visible "+scale+" at "+size);
                 Check(form.Canvas.Height>=form.ClientSize.Height-64*scale,"DPI image keeps full height "+scale+" at "+size+" canvas="+form.Canvas.Bounds+" parent="+form.Canvas.Parent.Bounds+" viewport="+form.Controls[0].Bounds);
                 Check(!((Panel)form.Controls[0]).AutoScroll,"only sidebar scrolls "+scale);
@@ -289,7 +340,7 @@ internal static class MeasurementTests
                 presentation=app.Presentations.Open(saved,0,0,-1);app.ActiveWindow.View.GotoSlide(1);presentation.Slides.Item(1).Shapes.Item(repeatName).Select(-1);selected=host.ReadMeasurementSelection();
                 Check(PowerPointHost.ReadMeasurementData(selected.Photos[0].Shape).Items.Count==5,"persist after reopen pptx");
                 host.ResetMeasurements(selected);Check((int)presentation.Slides.Count==1,"reset copies only photo");
-                var resetSelection=host.ReadMeasurementSelection();dynamic resetGroup=PowerPointHost.TopMeasurementParent(resetSelection.Photos[0].Shape);Check(PowerPointHost.ReadMeasurementData(resetSelection.Photos[0].Shape)==null,"reset removes calibration");Check((int)resetGroup.Type==6,"reset keeps number photo grouped");
+                var resetSelection=host.ReadMeasurementSelection();dynamic resetGroup=PowerPointHost.TopMeasurementParent(resetSelection.Photos[0].Shape);Check(PowerPointHost.ReadMeasurementData(resetSelection.Photos[0].Shape)==null,"reset removes calibration");Check((int)resetGroup.Type!=6,"measured copy and reset contain no number label");
             }
             dynamic rotated=presentation.Slides.Add(2,12);app.ActiveWindow.View.GotoSlide(2);
             dynamic rp=rotated.Shapes.AddPicture(path,0,-1,220f,180f,420f,280f);rp.Name="RotatedCrop";rp.PictureFormat.CropLeft=25f;rp.Flip(0);rp.Rotation=27f;
@@ -315,12 +366,62 @@ internal static class MeasurementTests
                 dynamic result=host.ApplyMeasurements(selected,d);result.Select(-1);var actualSelection=host.ReadMeasurementSelection();
                 Check(PowerPointHost.ReadMeasurementData(actualSelection.Photos[0].Shape).Items.Count==20,"all 20 manual tools exported with editable geometry");
             }
+            GroupedDialogCopy(host,app,presentation,path,output);
             Orientation(host,app,presentation,output);
         }
         finally
         {
             if(presentation!=null){try{presentation.Saved=-1;presentation.Close();}catch{}}
             if(app!=null){try{app.Quit();}catch{}try{Marshal.ReleaseComObject(app);}catch{}}
+        }
+    }
+    private sealed class PptOwner : IWin32Window
+    {private readonly IntPtr handle;internal PptOwner(IntPtr value){handle=value;}public IntPtr Handle{get{return handle;}}}
+    private static int TaggedCount(dynamic shape,string tag)
+    {
+        int count=string.IsNullOrEmpty((string)shape.Tags.Item(tag))?0:1;
+        if((int)shape.Type==6)for(int i=1;i<=(int)shape.GroupItems.Count;i++)count+=TaggedCount(shape.GroupItems.Item(i),tag);
+        return count;
+    }
+    private static void GroupedDialogCopy(PowerPointHost host,dynamic app,dynamic presentation,string path,string output)
+    {
+        foreach(string style in new[]{"square","circle","paren","suffix","alphaSuffix"})
+        {
+            dynamic slide=presentation.Slides.Add((int)presentation.Slides.Count+1,12);app.ActiveWindow.View.GotoSlide((int)slide.SlideIndex);
+            dynamic photo=slide.Shapes.AddPicture(path,0,-1,150f,170f,400f,266.6667f);photo.Name="GroupedSource_"+style;
+            var format=new NumberLabelSettings {FontSize=17,BorderMode="color",BorderWidth=2.5f,BorderColorArgb=Color.Red.ToArgb(),FillMode="color",FillColorArgb=Color.LightBlue.ToArgb()};
+            dynamic label=host.AddNumberLabel(style,0,format);dynamic original=label.ParentGroup;string originalName=(string)original.Name;
+            Check((int)label.Line.Visible==-1&&(int)label.Line.ForeColor.RGB==255,"custom label border "+style);Near((double)label.Line.Weight,2.5,"custom border width "+style);
+            Check((int)label.Fill.Visible==-1&&(int)label.Fill.ForeColor.RGB==NumberLabelSettings.ToOfficeColor(Color.LightBlue.ToArgb()),"custom label fill "+style);
+            if(style=="alphaSuffix")
+            {
+                Check((string)label.TextFrame2.TextRange.Text=="A)","alpha suffix real shape");
+                dynamic next=host.AddNumberLabel(style,null,new NumberLabelSettings {FillMode="none",BorderMode="none"});
+                Check((string)next.TextFrame2.TextRange.Text=="L)"&&(int)next.Fill.Visible==0&&(int)next.Line.Visible==0,"alpha suffix next and transparent shape");next.Delete();
+            }
+            original.Select(-1);var selection=host.ReadMeasurementSelection();double originalLeft=(double)original.Left;int count=(int)slide.Shapes.Count;Exception failure=null;
+            using(var form=new MeasurementForm(host,selection))
+            {
+                form.Shown+=delegate {form.BeginInvoke((Action)delegate {
+                    try
+                    {
+                        var doc=form.Canvas.Document;doc.Calibrate(Item("line",100,100,300,100),100,"µm");
+                        var curve=Item("ncurve",300,250,700,180,1000,330,750,550,450,500);MeasurementSpline.EnsureTangents(curve);curve.Tangents[0]=new MeasurePoint(30,-80);Add(doc,curve);
+                        typeof(MeasurementForm).GetMethod("Apply",BindingFlags.Instance|BindingFlags.NonPublic).Invoke(form,null);
+                    }
+                    catch(Exception ex){failure=ex;form.Close();}
+                });};
+                form.ShowDialog(new PptOwner(host.WindowHandle));
+            }
+            if(failure!=null)throw new Exception("Grouped modal copy "+style,failure);
+            Check((int)slide.Shapes.Count==count+1,"one grouped measurement copy "+style);
+            Check((string)original.Name==originalName&&(int)original.GroupItems.Count==2&&TaggedCount(original,"LABPHOTO_NUMBER_STYLE")==1,"original numbered group unchanged "+style);
+            Near((double)original.Left,originalLeft,"original group position "+style);
+            var copied=host.ReadMeasurementSelection();dynamic result=PowerPointHost.TopMeasurementParent(copied.Photos[0].Shape);
+            Check((int)result.GroupItems.Count==3&&TaggedCount(result,"LABPHOTO_NUMBER_STYLE")==0,"copied photo and measurement only "+style);
+            var data=PowerPointHost.ReadMeasurementData(copied.Photos[0].Shape);Check(data.Items.Single().Kind=="ncurve"&&data.Items[0].Tangents[0].Y==-80,"curve controls survive COM tags "+style);
+            using(var reopened=host.CreateMeasurementSession(copied))Check(reopened.Document.Items.Count==1,"group copy reopens "+style);
+            if(style=="alphaSuffix")slide.Export(Path.Combine(output,"measurement-group-copy.png"),"PNG",1440,1080);
         }
     }
 }

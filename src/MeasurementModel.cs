@@ -25,6 +25,7 @@ namespace LabPhotoTools
         public int Id;
         public string Kind = "line", Note = "";
         public List<MeasurePoint> Points = new List<MeasurePoint>();
+        public List<MeasurePoint> Tangents = new List<MeasurePoint>();
         public int CircleA, CircleB;
         public int ColorArgb = Color.Yellow.ToArgb(), TextColorArgb = Color.White.ToArgb();
         public float LineWidth = 2, FontSize = 13;
@@ -62,6 +63,9 @@ namespace LabPhotoTools
             {
                 if (item == null || item.Kind==null || !MeasurementGeometry.Names.ContainsKey(item.Kind) || item.Points == null || item.Points.Count > 5000 || item.LabelOffset == null || !MeasurementGeometry.Finite(item.LabelOffset.X) || !MeasurementGeometry.Finite(item.LabelOffset.Y) || item.Id<=0 || !ids.Add(item.Id) || !MeasurementGeometry.Finite(item.LineWidth) || item.LineWidth<1 || item.LineWidth>12 || !MeasurementGeometry.Finite(item.FontSize) || item.FontSize<6 || item.FontSize>72 || item.Points.Any(p => p == null || !MeasurementGeometry.Finite(p.X) || !MeasurementGeometry.Finite(p.Y)))
                     throw new InvalidOperationException("저장된 측정 도형이 올바르지 않습니다.");
+                if(item.Tangents==null)item.Tangents=new List<MeasurePoint>();
+                if(item.Tangents.Count!=0&&(item.Kind!="ncurve"||item.Tangents.Count!=item.Points.Count||item.Tangents.Any(p=>p==null||!MeasurementGeometry.Finite(p.X)||!MeasurementGeometry.Finite(p.Y))))
+                    throw new InvalidOperationException("저장된 곡률 정보가 올바르지 않습니다.");
                 MeasurementGeometry.Build(item, d);
             }
             d.NextId=Math.Max(d.NextId,d.Items.Count==0?1:d.Items.Max(i=>i.Id)+1);
@@ -100,6 +104,7 @@ namespace LabPhotoTools
             {"circle_distance", "원 사이 거리"}, {"ellipse", "3점 타원"}, {"polygon", "다각형 면적"},
             {"polyline", "꺾은선 길이"}, {"lasso", "자유곡선 면적"}, {"curve", "곡선 면적"}, {"gap", "평행선 간격"},
             {"pointline", "점·직선 거리"}, {"point", "점"}, {"text", "텍스트"}, {"arrow", "화살표"}, {"draw", "자유선"}
+            ,{"ncurve", "n점원"}
         };
         public static bool Finite(double v) { return !double.IsNaN(v) && !double.IsInfinity(v); }
         public static double UnitFactor(string unit)
@@ -109,7 +114,7 @@ namespace LabPhotoTools
         public static int PointCount(string kind)
         {
             if (kind == "point" || kind == "text") return 1;
-            if (kind == "polygon" || kind == "polyline" || kind == "lasso" || kind == "curve" || kind == "draw" || kind == "gap" || kind == "pointline") return 0;
+            if (kind == "ncurve" || kind == "polygon" || kind == "polyline" || kind == "lasso" || kind == "curve" || kind == "draw" || kind == "gap" || kind == "pointline") return 0;
             if (kind == "angle" || kind == "rect3" || kind == "circle3" || kind == "ellipse") return 3;
             return 2;
         }
@@ -209,14 +214,16 @@ namespace LabPhotoTools
             }
             else
             {
+                if(k=="ncurve")p=MeasurementSpline.Sample(item);
                 if(k=="curve")
                 {
                     List<MeasurePoint> samples=new List<MeasurePoint>();
                     for(int n=0;n+2<p.Count;n+=2)for(int j=0;j<24;j++){double t=j/24.0;samples.Add(p[n]*((1-t)*(1-t))+p[n+1]*(2*(1-t)*t)+p[n+2]*(t*t));}
                     samples.Add(p[p.Count-1]);p=samples;
                 }
-                bool closed=k=="polygon"||k=="lasso"||k=="curve";r.Length=Perimeter(p,closed);Positive(r.Length);Path(r,closed,p.ToArray());
+                bool closed=k=="ncurve"||k=="polygon"||k=="lasso"||k=="curve";r.Length=Perimeter(p,closed);Positive(r.Length);Path(r,closed,p.ToArray());
                 r.Area=closed?PolygonArea(p):0;r.Label=p[p.Count/2];r.Text=closed?"A="+Area(r.Area,doc)+"\nP="+Length(r.Length,doc):Length(r.Length,doc);
+                if(k=="ncurve"){Positive(r.Area);r.Label=new MeasurePoint(item.Points.Average(q=>q.X),item.Points.Average(q=>q.Y));}
                 if(k=="arrow") { MeasurePoint v=p[0]-p[1];double n=Distance(p[0],p[1]);v=v*(Math.Min(n*.25,doc.Width*.018)/n);MeasurePoint normal=new MeasurePoint(-v.Y,v.X)*.5;Path(r,false,p[1]+v+normal,p[1],p[1]+v-normal); }
                 if(k=="arrow"||k=="draw")r.Text="";
             }
@@ -229,4 +236,3 @@ namespace LabPhotoTools
         { double n=Dot(b-a,b-a);if(n<1e-12)return Distance(p,a);double t=Math.Max(0,Math.Min(1,Dot(p-a,b-a)/n));return Distance(p,a+(b-a)*t); }
     }
 }
-

@@ -33,7 +33,7 @@ namespace LabPhotoTools
         private readonly List<FlowLayoutPanel> buttonGrids=new List<FlowLayoutPanel>();
         private readonly ToolTip tips=new ToolTip();
         private MeasurementItem pendingCalibration;
-        private bool reflowing,refreshing;
+        private bool reflowing,refreshing,reflowPending,extentPending;
         private bool footerInScroll;
         private readonly Button apply;
         private readonly List<Image> buttonImages=new List<Image>();
@@ -67,9 +67,11 @@ namespace LabPhotoTools
             Canvas.CalibrationReady+=delegate(MeasurementItem item){pendingCalibration=item;scaleStatus.Text="기준 "+MeasurementGeometry.ReferenceLength(item).ToString("0.###")+" px · 실제 길이를 입력하고 스케일 적용";status.Text="선택한 기준의 실제 길이를 입력하고 ‘스케일 적용’을 누르세요.";};
             Canvas.Changed+=RefreshResults;Canvas.Status+=delegate(string text){status.Text=text;};
             Canvas.HoverChanged+=delegate(MeasurePoint p){magnifier.Point=p;magnifier.Invalidate();status.Text="커서 X "+(p.X*session.Image.Width/Canvas.Document.Width).ToString("0.##")+" / Y "+(p.Y*session.Image.Height/Canvas.Document.Height).ToString("0.##")+" px · WASD/방향키: 1 px · Shift: 10 px · Enter/클릭: 점 확정";};
-            Shown+=delegate{FitScreen();Reflow();Canvas.Focus();};
-            windowViewport.SizeChanged+=delegate{Reflow();};
-            ClientSizeChanged+=delegate{Reflow();};
+            Shown+=delegate{FitScreen();RequestReflow();Canvas.Focus();};
+            windowViewport.SizeChanged+=delegate{RequestReflow();};
+            ClientSizeChanged+=delegate{RequestReflow();};
+            FontChanged+=delegate{RequestReflow();};
+            settings.Layout+=delegate{QueueScrollExtent();};
             RefreshResults();Canvas.SetTool(Canvas.Document.HasScale?"select":"line",!Canvas.Document.HasScale);
             if(Canvas.Document.HasScale)status.Text="저장된 스케일과 측정 도형을 불러왔습니다.";
             tips.SetToolTip(actual,"스케일바의 실제 길이. 평행선은 간격, 3점원은 지름입니다.");
@@ -96,6 +98,10 @@ namespace LabPhotoTools
                 string k=pair.Key;Button b=Button(pair.Value,delegate{ChooseTool(k,false);});b.Tag=k;SetImage(b,k);tools.Controls.Add(b);toolButtons.Add(b);
                 tips.SetToolTip(b,Hint(k));
             }
+            Button pointEdit=Button("점편집",Canvas.BeginPointEdit);SetImage(pointEdit,"editpoints");tools.Controls.Add(pointEdit);
+            tools.Controls.Add(Button("곡률 자동",delegate{Canvas.SetPointCurvature(false);}));
+            tools.Controls.Add(Button("모서리 점",delegate{Canvas.SetPointCurvature(true);}));
+            tips.SetToolTip(pointEdit,"측정 도형이나 측정값 하나를 선택한 뒤 점을 드래그하세요. n점원은 주황 핸들로 곡률을 조절합니다.");
             Add(tools);FlowLayoutPanel edit=Flow();edit.Name="MeasurementEditGrid";buttonGrids.Add(edit);
             edit.Controls.Add(Button("선택·이동",delegate{ChooseTool("select",false);}));edit.Controls.Add(Button("전체 선택",Canvas.SelectAll));
             edit.Controls.Add(Button("지우개",delegate{ChooseTool("erase",false);}));edit.Controls.Add(Button("선택 삭제",Canvas.DeleteSelected));
@@ -127,6 +133,7 @@ namespace LabPhotoTools
                 case "line":return "두 끝점을 클릭하세요.";
                 case "gap":case "pointline":return "기준선 2점 → 측정할 위치를 차례로 클릭 → Enter 또는 우클릭으로 완료.";
                 case "circle3":return "원 둘레 위의 서로 떨어진 세 점을 클릭하세요.";
+                case "ncurve":return "테두리를 따라 점을 순서대로 클릭하세요. Enter 또는 우클릭으로 부드러운 닫힌 곡선을 완성합니다. 점편집에서 곡률을 조절할 수 있습니다.";
                 case "circle":return "중심점 → 원 둘레의 한 점을 클릭하세요.";
                 case "circle_distance":return "기존 원 두 개의 둘레나 중심을 클릭하세요. Min은 외부 간격, Center는 중심 거리입니다.";
                 case "rect":return "사각형의 대각선 두 꼭짓점을 클릭하세요.";
@@ -192,6 +199,27 @@ namespace LabPhotoTools
             int calibrationWidth=calibrationTools.Controls.OfType<Button>().Max(b=>b.Width);
             foreach(Button b in calibrationTools.Controls)b.Width=calibrationWidth;
         }
+        private void RequestReflow()
+        {
+            Reflow();
+            // WinForms finishes nested auto-size and font propagation after
+            // resize events. Reconcile scroll extents once that layout settles.
+            if(reflowPending||!IsHandleCreated||Disposing||IsDisposed)return;
+            reflowPending=true;BeginInvoke((MethodInvoker)delegate{reflowPending=false;Reflow();});
+        }
+        private void QueueScrollExtent()
+        {
+            if(reflowing||extentPending||!IsHandleCreated||Disposing||IsDisposed)return;
+            extentPending=true;BeginInvoke((MethodInvoker)delegate
+            {
+                extentPending=false;if(Disposing||IsDisposed)return;
+                // Cursor hints and validation messages can wrap to additional
+                // rows after layout. Keep the last action reachable as they grow.
+                int height=settings.Controls.Cast<Control>().Max(c=>c.Bottom+c.Margin.Bottom)+settings.Padding.Bottom;
+                if(settings.Height!=height)settings.Height=height;
+                settingsViewport.AutoScrollMinSize=new Size(settings.Width,height);
+            });
+        }
         private void Reflow()
         {
             if(reflowing||Disposing||IsDisposed)return;reflowing=true;
@@ -215,6 +243,11 @@ namespace LabPhotoTools
                 int available=Math.Max(1,root.ClientSize.Width-root.Padding.Horizontal);
                 int desired=Math.Max(minimumWidth+SystemInformation.VerticalScrollBarWidth,(int)Math.Min(available*.30,600*scale));
                 int right=Math.Min(desired,(int)(available*.48));root.ColumnStyles[1].Width=Math.Max(1,right);
+                foreach(Button b in footer.Controls.OfType<Button>())
+                {
+                    b.Width=Math.Min(b.Width,Math.Max(30,right-SystemInformation.VerticalScrollBarWidth-b.Margin.Horizontal-4));
+                    b.Height=Math.Max(b.Height,b.GetPreferredSize(new Size(b.Width,0)).Height);
+                }
                 bool scrollFooter=footer.Controls.OfType<Button>().Any(b=>b.Width+b.Margin.Horizontal>right)
                     ||footer.GetPreferredSize(new Size(Math.Max(1,right),0)).Height>Math.Max(80,(root.ClientSize.Height-root.Padding.Vertical)*.35);
                 if(scrollFooter!=footerInScroll)
@@ -223,6 +256,7 @@ namespace LabPhotoTools
                     else {settings.Controls.Remove(footer);settings.RowStyles.RemoveAt(settings.RowStyles.Count-1);settings.RowCount=settings.Controls.Count;sidebar.Controls.Add(footer,0,1);}
                     footerInScroll=scrollFooter;
                 }
+                root.PerformLayout();
                 int contentWidth=Math.Max(minimumWidth,settingsViewport.ClientSize.Width-1);
                 settings.Width=contentWidth;
                 int bandWidth=contentWidth-settings.Padding.Horizontal;
@@ -233,8 +267,18 @@ namespace LabPhotoTools
                 int calibrationHeight=calibrationValues.Controls.Cast<Control>().Sum(c=>c.GetPreferredSize(new Size(Math.Max(1,columnWidth-c.Margin.Horizontal),0)).Height+c.Margin.Vertical);
                 calibrationValues.Height=calibrationHeight;calibrationBand.Height=Math.Max(calibrationHeight,magnifier.Height+magnifier.Margin.Vertical);
                 int textWidth=Math.Max(1,bandWidth-12);status.MaximumSize=new Size(textWidth,0);navigationHint.MaximumSize=new Size(textWidth,0);
+                // A native single-line edit can exceed WinForms' preferred
+                // height at high DPI; reserve the control's actual height.
+                RowStyle annotationRow=settings.RowStyles[settings.GetRow(annotation)];
+                annotationRow.SizeType=SizeType.Absolute;annotationRow.Height=Math.Max(annotation.Height,annotation.PreferredHeight)+annotation.Margin.Vertical;
                 int contentHeight=settings.Padding.Vertical+settings.Controls.Cast<Control>().Sum(c=>(c.AutoSize?c.GetPreferredSize(new Size(Math.Max(1,bandWidth-c.Margin.Horizontal),0)).Height:c.Height)+c.Margin.Vertical);
-                settings.Bounds=new Rectangle(settingsViewport.AutoScrollPosition,new Size(contentWidth,contentHeight));settingsViewport.AutoScrollMinSize=new Size(contentWidth,contentHeight);root.PerformLayout();
+                settings.Bounds=new Rectangle(settingsViewport.AutoScrollPosition,new Size(contentWidth,contentHeight));
+                settings.PerformLayout();
+                // Auto-sized table rows may be taller than their preferred-height
+                // estimate after text wraps at high DPI. Scroll to the actual
+                // last control, including its margin and the table's padding.
+                contentHeight=Math.Max(contentHeight,settings.Controls.Cast<Control>().Max(c=>c.Bottom+c.Margin.Bottom)+settings.Padding.Bottom);
+                settings.Height=contentHeight;settingsViewport.AutoScrollMinSize=new Size(contentWidth,contentHeight);root.PerformLayout();
             }
             finally{reflowing=false;}
         }
@@ -262,6 +306,7 @@ namespace LabPhotoTools
             {
                 g.SmoothingMode=System.Drawing.Drawing2D.SmoothingMode.AntiAlias;g.ScaleTransform(size/32f,size/32f);
                 if(kind=="ruler"){g.TranslateTransform(16,16);g.RotateTransform(-35);g.FillRectangle(Brushes.LightSteelBlue,-13,-6,26,12);g.DrawRectangle(pen,-13,-6,26,12);for(int x=-9;x<=10;x+=4)g.DrawLine(pen,x,-6,x,x%2==0?2:-1);}
+                else if(kind=="ncurve"||kind=="editpoints"){PointF[] p={new PointF(3,17),new PointF(11,5),new PointF(25,8),new PointF(29,17),new PointF(19,27),new PointF(8,24)};g.DrawClosedCurve(pen,p);foreach(PointF q in p)g.FillRectangle(Brushes.SteelBlue,q.X-2,q.Y-2,4,4);}
                 else if(kind=="circle"||kind=="circle3"||kind=="ellipse"){g.DrawEllipse(pen,4,kind=="ellipse"?9:4,24,kind=="ellipse"?14:24);if(kind=="circle")g.DrawLine(pen,16,16,27,16);else for(int i=0;i<3;i++){double t=i*2*Math.PI/3;g.FillEllipse(Brushes.SteelBlue,(float)(14+12*Math.Cos(t)),(float)(14+12*Math.Sin(t)),4,4);}}
                 else if(kind=="rect"||kind=="rect3"){if(kind=="rect3"){g.TranslateTransform(16,16);g.RotateTransform(-20);g.TranslateTransform(-16,-16);}g.DrawRectangle(pen,5,7,23,18);}
                 else if(kind=="angle"||kind=="hangle"||kind=="vangle"){g.DrawLines(pen,new[]{new Point(5,4),new Point(5,27),new Point(28,19)});g.DrawArc(pen,0,18,13,13,260,95);}

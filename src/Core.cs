@@ -18,7 +18,7 @@ using System.Windows.Forms;
 [assembly: AssemblyTitle("Lab Photo Tools")]
 [assembly: ComVisible(false)]
 [assembly: CompilationRelaxations(8)]
-[assembly: AssemblyVersion("0.1.15.0")]
+[assembly: AssemblyVersion("0.1.16.0")]
 namespace LabPhotoTools
 {
 	[ComVisible(true)]

@@ -7,7 +7,7 @@ using System.Windows.Forms;
 
 namespace LabPhotoTools
 {
-    internal sealed class MeasurementCanvas : Control
+    internal sealed partial class MeasurementCanvas : Control
     {
         internal MeasurementDocument Document;
         internal Image Source;
@@ -29,7 +29,7 @@ namespace LabPhotoTools
         private int circleFirst;
         private Point? precisionMouse;
         internal MeasurePoint HoverPoint {get{return new MeasurePoint(hover.X,hover.Y);}}
-        internal bool HasUnfinishedDrawing {get{return points.Count>0||circleFirst!=0;}}
+        internal bool HasUnfinishedDrawing {get{return points.Count>0||circleFirst!=0||pointDragBefore!=null;}}
         private readonly Dictionary<int,List<MeasurePoint>> dragPoints = new Dictionary<int,List<MeasurePoint>>();
         private readonly Dictionary<int,MeasurePoint> dragLabels = new Dictionary<int,MeasurePoint>();
         private readonly Dictionary<int, RectangleF> labelBounds = new Dictionary<int, RectangleF>();
@@ -58,17 +58,18 @@ namespace LabPhotoTools
         {
             CancelDrawing();Tool=tool;Calibrating=calibration;Cursor=tool=="select"?Cursors.Default:Cursors.Cross;Focus();Invalidate();
         }
-        internal void CancelDrawing() { points.Clear();circleFirst=0;dragging=panning=freehand=false;Capture=false;Invalidate(); }
+        internal void CancelDrawing() { EndPointDrag(true);points.Clear();circleFirst=0;dragging=panning=freehand=false;Capture=false;Invalidate(); }
         internal void PushUndo()
         { undo.Add(Document.Serialize());if(undo.Count>100)undo.RemoveAt(0);redo.Clear(); }
         private void Notify() { Invalidate();if(Changed!=null)Changed(); }
         internal void Undo()
         {
+            if(pointDragBefore!=null){EndPointDrag(true);return;}
             if(points.Count>0){points.RemoveAt(points.Count-1);Invalidate();return;}
             if(undo.Count==0)return;redo.Add(Document.Serialize());Document=MeasurementDocument.Deserialize(undo[undo.Count-1]);undo.RemoveAt(undo.Count-1);Selected.Clear();CancelDrawing();Notify();
         }
         internal void Redo()
-        { if(redo.Count==0)return;undo.Add(Document.Serialize());Document=MeasurementDocument.Deserialize(redo[redo.Count-1]);redo.RemoveAt(redo.Count-1);Selected.Clear();CancelDrawing();Notify(); }
+        { if(pointDragBefore!=null){EndPointDrag(true);return;}if(redo.Count==0)return;undo.Add(Document.Serialize());Document=MeasurementDocument.Deserialize(redo[redo.Count-1]);redo.RemoveAt(redo.Count-1);Selected.Clear();CancelDrawing();Notify(); }
         internal void DeleteSelected()
         { if(Selected.Count==0)return;PushUndo();Document.Delete(Selected);Selected.Clear();Notify(); }
         internal void ClearAll() { if(Document.Items.Count==0)return;PushUndo();Document.Items.Clear();Selected.Clear();CancelDrawing();Notify(); }
@@ -86,6 +87,7 @@ namespace LabPhotoTools
         }
         internal void Finish()
         {
+            if(Tool=="editpoints"){EndPointDrag(false);SetTool("select",false);Notify();return;}
             if(points.Count==0)return;
             try
             {
@@ -107,7 +109,7 @@ namespace LabPhotoTools
         internal void ClickImage(MeasurePoint p)
         {
             if(Document==null||p.X<0||p.Y<0||p.X>Document.Width||p.Y>Document.Height)return;
-            if(Tool=="select"||Tool=="erase")return;
+            if(Tool=="select"||Tool=="erase"||Tool=="editpoints")return;
             if(Tool=="circle_distance")
             {
                 MeasurementItem found=Hit(p,true);
@@ -118,6 +120,7 @@ namespace LabPhotoTools
                 MeasurementGeometry.Build(item,Document);PushUndo();item.Id=Document.NextId++;Document.Items.Add(item);circleFirst=0;Selected.Clear();Selected.Add(item.Id);Notify();return;
             }
             if(!Calibrating&&!Document.HasScale&&Tool!="select"&&Tool!="erase") { Tell("먼저 사진의 스케일바로 스케일을 맞추세요.");return; }
+            if(points.Count>=(Tool=="ncurve"?512:5000)){Tell("지정 가능한 점 수에 도달했습니다. Enter로 완성하세요.");return;}
             points.Add(p);
             int n=Calibrating?(Tool=="line"?2:3):MeasurementGeometry.PointCount(Tool);
             if(n>0&&points.Count>=n)Finish();else Invalidate();
@@ -129,6 +132,7 @@ namespace LabPhotoTools
             if(e.Button==MouseButtons.Right){if(points.Count>0)Finish();else {Tool="select";Notify();}return;}
             if(e.Button!=MouseButtons.Left)return;
             MeasurePoint p=precisionMouse.HasValue&&e.Location==precisionMouse.Value?HoverPoint:ToImage(e.Location);hover=p;
+            if(Tool=="editpoints"){StartPointDrag(p);return;}
             if(Tool=="select"||Tool=="erase")
             {
                 MeasurementItem item=Hit(p,false);
@@ -156,6 +160,7 @@ namespace LabPhotoTools
             // exact sub-screen-pixel image coordinate until the mouse really moves.
             if(precisionMouse.HasValue&&e.Location==precisionMouse.Value)return;
             precisionMouse=null;hover=ToImage(e.Location);
+            if(pointDragBefore!=null){MoveEditedPoint(hover);if(HoverChanged!=null)HoverChanged(hover);return;}
             if(dragging)
             {
                 MeasurePoint d=hover-dragStart;
@@ -171,7 +176,7 @@ namespace LabPhotoTools
             if(HoverChanged!=null)HoverChanged(hover);Invalidate();
         }
         protected override void OnMouseUp(MouseEventArgs e)
-        {base.OnMouseUp(e);if(freehand){freehand=false;Finish();}if(dragging)Notify();panning=dragging=false;Capture=false;}
+        {base.OnMouseUp(e);if(pointDragBefore!=null)EndPointDrag(false);if(freehand){freehand=false;Finish();}if(dragging)Notify();panning=dragging=false;Capture=false;}
         protected override void OnMouseWheel(MouseEventArgs e) {base.OnMouseWheel(e);ZoomAt(e.Location,e.Delta>0?1.25:.8);}
         protected override bool IsInputKey(Keys keyData)
         {Keys k=keyData&Keys.KeyCode;if(k==Keys.Left||k==Keys.Right||k==Keys.Up||k==Keys.Down||k==Keys.Enter||k==Keys.Escape)return true;return base.IsInputKey(keyData);}
@@ -182,7 +187,7 @@ namespace LabPhotoTools
             if(e.Control&&e.KeyCode==Keys.A){SelectAll();return;}
             if(e.KeyCode==Keys.Delete){if(e.Shift)ClearAll();else DeleteSelected();return;}
             if(e.KeyCode==Keys.Escape){CancelDrawing();Tool="select";Notify();return;}
-            if(e.KeyCode==Keys.Enter){if(points.Count>0&&(Tool=="polygon"||Tool=="curve"||Tool=="polyline"||Tool=="gap"||Tool=="pointline"))Finish();else ClickImage(new MeasurePoint(hover.X,hover.Y));return;}
+            if(e.KeyCode==Keys.Enter){if(Tool=="editpoints"||points.Count>0&&(Tool=="ncurve"||Tool=="polygon"||Tool=="curve"||Tool=="polyline"||Tool=="gap"||Tool=="pointline"))Finish();else ClickImage(new MeasurePoint(hover.X,hover.Y));return;}
             if(e.Control||e.Alt){e.Handled=false;return;}
             double step=e.Shift?10:1,dx=0,dy=0;
             if(e.KeyCode==Keys.A||e.KeyCode==Keys.Left)dx=-step;else if(e.KeyCode==Keys.D||e.KeyCode==Keys.Right)dx=step;
@@ -230,6 +235,7 @@ namespace LabPhotoTools
             g.DrawImage(Source,new[]{ToScreen(new MeasurePoint(0,0)),ToScreen(new MeasurePoint(Document.Width,0)),ToScreen(new MeasurePoint(0,Document.Height))});
             labelBounds.Clear();
             foreach(MeasurementItem item in Document.Items)DrawItem(g,item,Selected.Contains(item.Id),false);
+            if(Tool=="editpoints")DrawEditPoints(g);
             if(points.Count>0)
             {
                 MeasurementItem draft=NewItem();draft.Points.Add(hover);

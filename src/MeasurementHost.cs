@@ -29,14 +29,13 @@ namespace LabPhotoTools
         }
         private static object FindMeasurementPhoto(dynamic shapes,string name,int id)
         {
-            object byName=null;
             for(int i=1;i<=(int)shapes.Count;i++)
             {
                 dynamic s=shapes.Item(i);
                 if((int)s.Type==6){object nested=FindMeasurementPhoto(s.GroupItems,name,id);if(nested!=null)return nested;}
-                else if(IsPhoto(s)&&(string)s.Name==name){if((int)s.Id==id)return (object)s;byName=s;}
+                else if(IsPhoto(s)&&(int)s.Id==id)return (object)s;
             }
-            return byName;
+            return null;
         }
         internal static object TopMeasurementParent(dynamic shape)
         {
@@ -93,8 +92,9 @@ namespace LabPhotoTools
                 copy=app.Presentations.Open(path,-1,0,0);dynamic slide=copy.Slides.Item((int)((dynamic)selection.Slide).SlideIndex);
                 dynamic picture=FindMeasurementPhoto(slide.Shapes,source.Name,source.Id);
                 if(picture==null)throw new InvalidOperationException("선택한 사진을 복사본에서 찾지 못했습니다.");
+                string previewName="LabPreview_"+Guid.NewGuid().ToString("N");picture.Name=previewName;
                 List<object> leaves=new List<object>();FlattenMeasurementGroup(TopMeasurementParent(picture),leaves);
-                picture=leaves.Cast<dynamic>().First(s=>IsPhoto(s)&&(string)s.Name==source.Name);
+                picture=leaves.Cast<dynamic>().First(s=>IsPhoto(s)&&(string)s.Name==previewName);
                 // Keep canonical measurement coordinates, but display them with
                 // the full slide rotation (including rotation inherited from groups).
                 double rotation=(double)picture.Rotation;picture.Rotation=0f;
@@ -125,17 +125,29 @@ namespace LabPhotoTools
         {HashSet<int> ids=new HashSet<int>();for(int i=1;i<=(int)slide.Shapes.Count;i++)ids.Add((int)slide.Shapes.Item(i).Id);return ids;}
         private static void RollbackMeasurementCopy(dynamic slide,HashSet<int> before)
         {for(int i=(int)slide.Shapes.Count;i>=1;i--)try{dynamic s=slide.Shapes.Item(i);if(!before.Contains((int)s.Id))s.Delete();}catch{}}
-        private static object CopyMeasurementPhoto(PhotoSnapshot original,List<string> groupNames)
+        private static bool FindPhotoPath(dynamic shape,int id,List<int> path)
         {
-            dynamic top=TopMeasurementParent(original.Shape);dynamic copy=top.Duplicate().Item(1);
+            if((int)shape.Id==id)return true;
+            if((int)shape.Type!=6)return false;
+            for(int i=1;i<=(int)shape.GroupItems.Count;i++)
+            {path.Add(i);if(FindPhotoPath(shape.GroupItems.Item(i),id,path))return true;path.RemoveAt(path.Count-1);}
+            return false;
+        }
+        private static object CopyMeasurementPhoto(PhotoSnapshot original,List<string> groupNames,bool preserveNumber)
+        {
+            dynamic top=TopMeasurementParent(original.Shape);var path=new List<int>();
+            if(!FindPhotoPath(top,original.Id,path))throw new InvalidOperationException("선택한 사진을 그룹에서 찾지 못했습니다.");
+            dynamic copy=top.Duplicate().Item(1);
             copy.Left=(float)((double)top.Left+18);copy.Top=(float)((double)top.Top+18);
-            dynamic picture=(int)copy.Type==6?FindMeasurementPhoto(copy.GroupItems,original.Name,original.Id):(object)copy;
-            if(picture==null)throw new InvalidOperationException("복사한 사진을 찾지 못했습니다.");
+            // Duplicate may rename descendants and assigns new IDs. Follow the
+            // original's group-item path instead of matching mutable names/IDs.
+            dynamic picture=copy;foreach(int index in path)picture=picture.GroupItems.Item(index);
+            if(!IsPhoto(picture))throw new InvalidOperationException("복사한 그룹에서 사진을 찾지 못했습니다.");
             // Give the target its own name before ungrouping. A surrounding
             // group may contain unrelated photos, shapes or text: discard those.
             string target="LabMeasuredPhoto_"+Guid.NewGuid().ToString("N");picture.Name=target;
             List<PhotoSnapshot> photos=new List<PhotoSnapshot>();CollectSelectedPhotos(copy,photos);
-            bool keepNumber=photos.Count==1;
+            bool keepNumber=preserveNumber&&photos.Count==1;
             List<object> leaves=new List<object>();FlattenMeasurementGroup(copy,leaves);
             foreach(dynamic leaf in leaves)
             {
@@ -144,6 +156,8 @@ namespace LabPhotoTools
                 {leaf.Name="LabNumber_copy_"+Guid.NewGuid().ToString("N");groupNames.Add((string)leaf.Name);}
                 else leaf.Delete();
             }
+            if(!keepNumber)picture.Tags.Delete("LABPHOTO_ATTACHED_LABEL");
+            picture.Tags.Delete("LABPHOTO_ATTACHED_MEASUREMENT");
             return (object)picture;
         }
         public object ApplyMeasurements(SelectionSnapshot selection,MeasurementDocument document)
@@ -154,7 +168,7 @@ namespace LabPhotoTools
             try
             {
                 List<string> groupNames=new List<string>();
-                dynamic picture=CopyMeasurementPhoto(selection.Photos[0],groupNames);
+                dynamic picture=CopyMeasurementPhoto(selection.Photos[0],groupNames,false);
                 PhotoSnapshot photo=SnapshotPhoto(picture);string token=Guid.NewGuid().ToString("N");
                 // Exported pixels already include the photo's flip. Map the
                 // rendered local picture axes through its current rotation.
@@ -201,7 +215,7 @@ namespace LabPhotoTools
             try
             {
                 List<string> keep=new List<string>();
-                dynamic photo=CopyMeasurementPhoto(selection.Photos[0],keep);
+                dynamic photo=CopyMeasurementPhoto(selection.Photos[0],keep,true);
                 for(int i=(int)photo.Tags.Count;i>=1;i--){string name=(string)photo.Tags.Name(i);if(name.StartsWith(MeasurementPrefix,StringComparison.Ordinal)||name=="LABPHOTO_ATTACHED_MEASUREMENT")photo.Tags.Delete(name);}
                 dynamic saved=photo;if(keep.Count>1){saved=slide.Shapes.Range(keep.Cast<object>().ToArray()).Group();saved.Name="LabNumberGroup_reset_"+saved.Id;}
                 app.ActiveWindow.View.GotoSlide((int)slide.SlideIndex);saved.Select(-1);

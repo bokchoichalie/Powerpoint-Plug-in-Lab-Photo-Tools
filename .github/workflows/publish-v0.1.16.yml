@@ -1,0 +1,36 @@
+name: Publish v0.1.16 release
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/publish-v0.1.16.yml
+      - release-assets/LabPhotoTools-0.1.16-preview.zip
+      - release-assets/RELEASE_NOTES_v0.1.16.md
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify tested installer
+        shell: bash
+        run: |
+          echo "4B29EE954C1841441D32A5240BEF0982F044EEC8EB392BB79ED2A9FF3057C8AD  release-assets/LabPhotoTools-0.1.16-preview.zip" | sha256sum --check -
+          printf '%s  %s\n' "4B29EE954C1841441D32A5240BEF0982F044EEC8EB392BB79ED2A9FF3057C8AD" "LabPhotoTools-0.1.16-preview.zip" > release-assets/LabPhotoTools-0.1.16-preview.zip.sha256
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          if gh release view v0.1.16 >/dev/null 2>&1; then
+            gh release upload v0.1.16 release-assets/LabPhotoTools-0.1.16-preview.zip release-assets/LabPhotoTools-0.1.16-preview.zip.sha256 --clobber
+            gh release edit v0.1.16 --title "Lab Photo Tools 0.1.16 Preview" --notes-file release-assets/RELEASE_NOTES_v0.1.16.md --prerelease
+          else
+            gh release create v0.1.16 release-assets/LabPhotoTools-0.1.16-preview.zip release-assets/LabPhotoTools-0.1.16-preview.zip.sha256 --target "$GITHUB_SHA" --title "Lab Photo Tools 0.1.16 Preview" --notes-file release-assets/RELEASE_NOTES_v0.1.16.md --prerelease
+          fi
+

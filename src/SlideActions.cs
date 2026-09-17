@@ -6,12 +6,13 @@ namespace LabPhotoTools
 {
     public static class NumberLabels
     {
-        public static bool IsStyle(string style) { return style == "square" || style == "circle" || style == "paren" || style == "suffix"; }
+        public static bool IsStyle(string style) { return style == "square" || style == "circle" || style == "paren" || style == "suffix" || style == "alphaSuffix"; }
+        public static bool IsAlphabet(string style){return style=="paren"||style=="alphaSuffix";}
         public static string Text(string style, int number)
         {
             if (number < 0) throw new ArgumentOutOfRangeException("number");
             string text = number.ToString(CultureInfo.InvariantCulture);
-            return style == "paren" ? "(" + Alphabet(number) + ")" : style == "suffix" ? text + ")" : text;
+            return style == "paren" ? "(" + Alphabet(number) + ")" : style=="alphaSuffix" ? Alphabet(number)+")" : style == "suffix" ? text + ")" : text;
         }
         public static string Alphabet(int zeroBasedNumber)
         {
@@ -313,10 +314,10 @@ namespace LabPhotoTools
                 shape.Name = "LabNumber_" + style + "_" + number + "_" + shape.Id;
                 shape.Tags.Add("LABPHOTO_NUMBER_STYLE", style);
                 shape.Tags.Add("LABPHOTO_NUMBER", number.ToString(CultureInfo.InvariantCulture));
-                shape.Fill.Visible = framed ? -1 : 0;
-                if (framed) { shape.Fill.Solid(); shape.Fill.ForeColor.RGB = 0xFFFFFF; shape.Fill.Transparency = 0f; }
-                shape.Line.Visible = framed ? -1 : 0;
-                if (framed) { shape.Line.ForeColor.RGB = 0; shape.Line.Weight = 1f; }
+                shape.Fill.Visible = settings.ShowFill(framed) ? -1 : 0;
+                if (settings.ShowFill(framed)) { shape.Fill.Solid(); shape.Fill.ForeColor.RGB = NumberLabelSettings.ToOfficeColor(settings.FillColorArgb); shape.Fill.Transparency = 0f; }
+                shape.Line.Visible = settings.ShowBorder(framed) ? -1 : 0;
+                if (settings.ShowBorder(framed)) { shape.Line.ForeColor.RGB = NumberLabelSettings.ToOfficeColor(settings.BorderColorArgb); shape.Line.Weight = settings.BorderWidth; }
                 dynamic frame = shape.TextFrame2;
                 frame.MarginLeft = settings.Padding; frame.MarginRight = settings.Padding;
                 frame.MarginTop = settings.Padding; frame.MarginBottom = settings.Padding;
@@ -366,4 +367,3 @@ namespace LabPhotoTools
         }
     }
 }
-

@@ -33,8 +33,8 @@ namespace LabPhotoTools
                   <button id='labPhotoMagic' label='알아서 배열' size='large' getImage='GetIcon' onAction='ArrangeSmart' screentip='선택한 사진 또는 현재 슬라이드 사진을 배열' supertip='사진이 선택되어 있으면 그 사진만, 선택이 없으면 현재 슬라이드의 모든 사진을 비율에 맞춰 앞 행부터 채웁니다. 도형과 텍스트는 그대로 둡니다.'/>
                 </group>
                 <group id='labPhotoNumbers' label='빠른 번호 매기기'>");
-            string[] names = { "정사각형", "원", "(알파벳)", "숫자)" };
-            string[] styles = { "square", "circle", "paren", "suffix" };
+            string[] names = { "정사각형", "원", "(알파벳)", "숫자)", "알파벳)" };
+            string[] styles = { "square", "circle", "paren", "suffix", "alphaSuffix" };
             for (int s = 0; s < styles.Length; s++)
             {
                 string style = styles[s];
@@ -51,7 +51,7 @@ namespace LabPhotoTools
                         if (n <= 10)
                             xml.AppendFormat("<button id='number_{0}_{1}' tag='{0}:{1}' label='{2}' showImage='false' onAction='AddNumber' screentip='{3} {4} 추가'/>", style, n, NumberLabels.Caption(style, n), names[s], NumberLabels.Text(style, n));
                         else
-                            xml.AppendFormat("<button id='number_{0}_next' tag='{0}:next' label='{2}' showImage='false' onAction='AddNumber' screentip='{1} 다음 번호' supertip='{3}'/>", style, names[s], style == "paren" ? "L+" : "11+", style == "paren" ? "이 슬라이드에서 같은 형식의 마지막 알파벳 다음 값을 추가합니다. (L)부터 자동 증가합니다." : "이 슬라이드에서 같은 형식의 가장 큰 번호 다음 숫자를 추가합니다. 11부터 자동 증가합니다.");
+                            xml.AppendFormat("<button id='number_{0}_next' tag='{0}:next' label='{2}' showImage='false' onAction='AddNumber' screentip='{1} 다음 번호' supertip='{3}'/>", style, names[s], NumberLabels.IsAlphabet(style) ? "L+" : "11+", NumberLabels.IsAlphabet(style) ? "이 슬라이드에서 같은 형식의 마지막 알파벳 다음 값을 추가합니다. L부터 자동 증가합니다." : "이 슬라이드에서 같은 형식의 가장 큰 번호 다음 숫자를 추가합니다. 11부터 자동 증가합니다.");
                     }
                     xml.Append("</buttonGroup>");
                 }
@@ -64,6 +64,18 @@ namespace LabPhotoTools
                   <box id='numberColorRow' boxStyle='horizontal'>
                     <gallery id='labNumberColor' label='글자 색' showLabel='true' getImage='GetNumberColorImage' columns='8' rows='4' itemWidth='24' itemHeight='24' showItemLabel='false' getItemCount='GetNumberColorCount' getItemLabel='GetNumberColorLabel' getItemImage='GetNumberColorItemImage' onAction='SetNumberColor' screentip='새 번호 라벨의 글자 색' supertip='색을 선택하면 이후 만드는 번호에 적용됩니다.'/>
                     <editBox id='labNumberColorHex' label='#' sizeString='FFFFFF' maxLength='7' getText='GetNumberColorHex' onChange='SetNumberColorHex' screentip='색상 코드 직접 입력' supertip='원하는 색의 여섯 자리 코드를 입력하고 Enter를 누르세요. 예: 검정 000000, 흰색 FFFFFF, 빨강 FF0000.'/>
+                  </box>
+                </box>
+                <separator id='numberBoxSettingsSeparator'/>
+                <box id='numberShapeFormatBox' boxStyle='vertical'>
+                  <box id='numberBorderRow' boxStyle='horizontal'>
+                    <gallery id='labNumberBorderColor' label='테두리 색' showLabel='true' getImage='GetNumberBoxColorImage' columns='8' rows='5' itemWidth='24' itemHeight='24' showItemLabel='false' getItemCount='GetNumberBoxColorCount' getItemLabel='GetNumberBoxColorLabel' getItemImage='GetNumberBoxColorItemImage' onAction='SetNumberBoxColor' supertip='이후 만드는 모든 라벨에 적용합니다. 기본값 또는 없음도 선택할 수 있습니다.'/>
+                    <editBox id='labNumberBorderHex' label='#' sizeString='FFFFFF' maxLength='7' getText='GetNumberBoxColorHex' onChange='SetNumberBoxColorHex' supertip='여섯 자리 색상 코드, 기본 또는 없음을 입력하고 Enter를 누르세요.'/>
+                  </box>
+                  <editBox id='labNumberBorderWidth' label='테두리 (pt)' sizeString='00.00' maxLength='8' getText='GetNumberBorderWidth' onChange='SetNumberBorderWidth' supertip='0~20 pt. 0은 테두리 없음입니다. Enter로 확정하세요.'/>
+                  <box id='numberFillRow' boxStyle='horizontal'>
+                    <gallery id='labNumberFillColor' label='바탕색' showLabel='true' getImage='GetNumberBoxColorImage' columns='8' rows='5' itemWidth='24' itemHeight='24' showItemLabel='false' getItemCount='GetNumberBoxColorCount' getItemLabel='GetNumberBoxColorLabel' getItemImage='GetNumberBoxColorItemImage' onAction='SetNumberBoxColor' supertip='이후 만드는 모든 라벨에 적용합니다. 기본값 또는 없음(투명)도 선택할 수 있습니다.'/>
+                    <editBox id='labNumberFillHex' label='#' sizeString='FFFFFF' maxLength='7' getText='GetNumberBoxColorHex' onChange='SetNumberBoxColorHex' supertip='여섯 자리 색상 코드, 기본 또는 없음을 입력하고 Enter를 누르세요.'/>
                   </box>
                 </box></group>
                   <group id='labMeasurementGroup' label='치수측정'>
@@ -120,7 +132,7 @@ namespace LabPhotoTools
         }
         public void OpenHelp(object control)
         {
-            MessageBox.Show("Lab Photo Tools의 치수측정: 사진 한 장을 선택한 뒤 자 모양 버튼을 누릅니다. 스케일바 기준을 지정하고 실제 길이·단위를 입력하여 스케일을 적용하세요. 선·원·사각형·타원·각도·면적을 측정하고 측정한 사진과 결과만 현재 슬라이드에 복사합니다. 측정 좌표와 값은 치수측정 대화창에서 수정하세요.\n\n사진 회전: 선택한 사진을 0.1° 단위로 회전하고 가장자리를 자릅니다.\n배경지우기: 별도 창에서 배경 제거 결과를 확인합니다. 두 기능 모두 원본 슬라이드를 복제하여 적용합니다.\n\n자동 배열과 간격 조절: 사진·도형·텍스트를 함께 선택해도 선택된 사진만 처리합니다.\n알아서 배열: 사진이 선택되어 있으면 그 사진만, 선택이 없으면 현재 슬라이드의 사진을 비율에 맞춰 앞 행부터 채웁니다. 4~16장은 정해진 촘촘한 격자로 배열하며 모든 행의 왼쪽을 맞추고 중앙 80% 영역을 사용합니다. 라벨 사진은 라벨과 사진의 그룹 전체를 함께 이동·크기 조절하여 왼쪽 위 정렬을 유지합니다.\n\n빠른 번호 매기기: 리본의 숫자나 알파벳을 누르면 현재 상태에서 라벨이 없는 사진을 왼쪽 위부터 순서대로 찾아 사진의 왼쪽 위에 붙이고 사진과 그룹화합니다. 기존 라벨을 지운 사진은 다시 라벨 대상이 됩니다. 사진이 없거나 모두 라벨이 붙었으면 독립 라벨을 빈 위치에 추가합니다. (알파벳)은 (A)~(K)를 바로 표시하며 ‘L+’는 다음 알파벳을 추가합니다. 숫자 형식의 ‘11+’는 같은 형식의 가장 큰 번호 다음 값(최소 11)을 추가합니다. 리본 오른쪽에서 글꼴·크기·색을 바로 바꾸세요. 입력한 크기나 색상 코드는 Enter로 확정합니다. 설정은 자동으로 저장되어 이후 만드는 모든 번호에 적용됩니다. 17 pt 라벨의 기본 상자 한 변·원 지름은 0.85 cm이며 글자 크기에 비례합니다. 긴 번호는 글자가 잘리지 않도록 필요한 만큼 커집니다.\n\n작은 화면에서는 창 내용이 세로로 바뀌며 스크롤로 모두 볼 수 있습니다. 배치와 번호 추가는 Ctrl+Z로 취소할 수 있습니다.\n사진 처리는 이 PC 안에서 실행됩니다.", "Lab Photo Tools 0.1.15", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            MessageBox.Show("Lab Photo Tools의 치수측정: 사진 한 장을 선택한 뒤 자 모양 버튼을 누릅니다. 스케일바 기준을 지정하고 실제 길이·단위를 입력하여 스케일을 적용하세요. 선·원·사각형·타원·각도·면적을 측정하고 측정한 사진과 결과만 현재 슬라이드에 복사합니다. n점원은 경계의 여러 점을 부드럽게 잇고 면적·둘레를 표시합니다. 측정값을 선택한 뒤 점편집에서 점과 곡률 핸들을 드래그할 수 있습니다. 그룹 사진도 사진과 측정 결과만 복사하며 기존 번호 라벨은 원본에 남습니다.\n\n사진 회전: 선택한 사진을 0.1° 단위로 회전하고 가장자리를 자릅니다.\n배경지우기: 별도 창에서 배경 제거 결과를 확인합니다. 두 기능 모두 원본 슬라이드를 복제하여 적용합니다.\n\n자동 배열과 간격 조절: 사진·도형·텍스트를 함께 선택해도 선택된 사진만 처리합니다.\n알아서 배열: 사진이 선택되어 있으면 그 사진만, 선택이 없으면 현재 슬라이드의 사진을 비율에 맞춰 앞 행부터 채웁니다. 4~16장은 정해진 촘촘한 격자로 배열하며 모든 행의 왼쪽을 맞추고 중앙 80% 영역을 사용합니다. 라벨 사진은 라벨과 사진의 그룹 전체를 함께 이동·크기 조절하여 왼쪽 위 정렬을 유지합니다.\n\n빠른 번호 매기기: 리본의 숫자나 알파벳을 누르면 현재 상태에서 라벨이 없는 사진을 왼쪽 위부터 순서대로 찾아 사진의 왼쪽 위에 붙이고 사진과 그룹화합니다. 기존 라벨을 지운 사진은 다시 라벨 대상이 됩니다. 사진이 없거나 모두 라벨이 붙었으면 독립 라벨을 빈 위치에 추가합니다. (알파벳)과 알파벳)은 A~K를 바로 표시하며 각 형식의 ‘L+’는 다음 알파벳을 추가합니다. 숫자 형식의 ‘11+’는 같은 형식의 가장 큰 번호 다음 값(최소 11)을 추가합니다. 리본 오른쪽에서 글꼴·크기·글자 색과 상자 테두리 색·굵기·바탕색을 바로 바꾸세요. 상자 색에서 ‘기본’은 형식의 기본 서식, ‘없음’은 투명입니다. 입력한 크기나 색상 코드는 Enter로 확정합니다. 설정은 자동으로 저장되어 이후 만드는 모든 번호에 적용됩니다. 17 pt 라벨의 기본 상자 한 변·원 지름은 0.85 cm이며 글자 크기에 비례합니다. 긴 번호는 글자가 잘리지 않도록 필요한 만큼 커집니다.\n\n치수측정은 사진을 왼쪽에 크게 표시하고 오른쪽 설정을 스크롤하여 모두 볼 수 있습니다. 배치와 번호 추가는 Ctrl+Z로 취소할 수 있습니다.\n사진 처리는 이 PC 안에서 실행됩니다.", "Lab Photo Tools 0.1.16", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
         private void ShowTool(string mode)
         {

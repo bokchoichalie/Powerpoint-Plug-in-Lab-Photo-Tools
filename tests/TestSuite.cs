@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Imaging;
@@ -86,15 +86,15 @@ internal static class TestSuite
         XmlNamespaceManager ns = new XmlNamespaceManager(xml.NameTable); ns.AddNamespace("r", xml.DocumentElement.NamespaceURI);
         XmlNodeList groups = xml.SelectNodes("//r:group",ns);
         Check(groups[1].Attributes["label"].Value=="배치" && groups[2].Attributes["label"].Value=="빠른 번호 매기기" && groups[3].Attributes["label"].Value=="치수측정" && groups[4].Attributes["label"].Value=="도움말", "Ribbon order");
-        Check(xml.SelectNodes("//r:button[starts-with(@id,'number_')]",ns).Count==48,"Expected 44 presets and 4 next buttons");
+        Check(xml.SelectNodes("//r:button[starts-with(@id,'number_')]",ns).Count==60,"Expected 55 presets and 5 next buttons");
         XmlNode numbers=xml.SelectSingleNode("//r:group[@id='labPhotoNumbers']",ns);
         Check(numbers.SelectNodes("r:box[starts-with(@id,'numberBox_')]//r:menu | r:box[starts-with(@id,'numberBox_')]//r:gallery | r:box[starts-with(@id,'numberBox_')]//r:dropDown | .//r:toggleButton",ns).Count==0,"Number presets must remain visible");
-        Check(numbers.SelectNodes("r:box[starts-with(@id,'numberBox_')]",ns).Count==4,"Four directly accessible style blocks");
+        Check(numbers.SelectNodes("r:box[starts-with(@id,'numberBox_')]",ns).Count==5,"Five directly accessible style blocks");
         Check(numbers.SelectNodes("r:box[@id='numberFormatBox']/r:dropDown[@id='labNumberFont']",ns).Count==1,"Font selection must be directly on the ribbon");
         Check(numbers.SelectNodes("r:box[@id='numberFormatBox']/r:editBox[@id='labNumberFontSize']",ns).Count==1,"Size input must be directly on the ribbon");
         Check(numbers.SelectNodes("r:box[@id='numberFormatBox']//r:gallery[@id='labNumberColor']",ns).Count==1,"Color selection must be on the ribbon");
         Check(numbers.SelectNodes(".//*[@onAction='OpenNumberSettings']",ns).Count==0,"No separate settings dialog");
-        foreach(string style in new[]{"square","circle","paren","suffix"})
+        foreach(string style in new[]{"square","circle","paren","suffix","alphaSuffix"})
         {
             XmlNode box=numbers.SelectSingleNode("r:box[@id='numberBox_"+style+"']",ns);
             Check(box.SelectNodes("r:buttonGroup",ns).Count==3,"Three visible rows per number style");
@@ -105,7 +105,7 @@ internal static class TestSuite
                 Check(button.Attributes["showLabel"]==null || button.Attributes["showLabel"].Value!="false","Number label must be shown");
             }
             XmlNode next=box.SelectSingleNode("r:buttonGroup/r:button[@tag='"+style+":next']",ns);
-            Check(next!=null && next.Attributes["label"].Value==(style=="paren" ? "L+" : "11+"),"One correctly labelled next button per style");
+            Check(next!=null && next.Attributes["label"].Value==(NumberLabels.IsAlphabet(style) ? "L+" : "11+"),"One correctly labelled next button per style");
         }
         HashSet<string> ids=new HashSet<string>();
         foreach(XmlNode node in xml.SelectNodes("//*[@id]")) Check(ids.Add(node.Attributes["id"].Value),"Duplicate id");
@@ -135,6 +135,7 @@ internal static class TestSuite
         Check(NumberLabels.Text("paren",0)=="(A)" && NumberLabels.Text("paren",10)=="(K)" && NumberLabels.Text("paren",11)=="(L)","Alphabet presets");
         Check(NumberLabels.Text("paren",26)=="(AA)","Alphabet continues after Z");
         Check(NumberLabels.Text("suffix",12)=="12)","Suffix");
+        Check(NumberLabels.Text("alphaSuffix",0)=="A)"&&NumberLabels.Text("alphaSuffix",10)=="K)"&&NumberLabels.Text("alphaSuffix",11)=="L)"&&NumberLabels.Text("alphaSuffix",26)=="AA)","Alphabet suffix presets and continuation");
     }
     private static void TestNumberSettings()
     {
@@ -147,6 +148,12 @@ internal static class TestSuite
         NumberLabelSettings saved=NumberLabelPreferences.Load(path);
         Check(saved.FontName==settings.FontName && saved.FontSize==31.5f && saved.TextColorArgb==settings.TextColorArgb,"Font preferences round trip");
         Check(saved.OfficeColor==(12|(98<<8)|(205<<16)),"Office RGB byte order");
+        Check(saved.BorderMode=="default"&&saved.FillMode=="default"&&saved.ShowFill(true)&&!saved.ShowFill(false),"Legacy container appearance");
+        settings.BorderMode="color";settings.BorderColorArgb=Color.Red.ToArgb();settings.BorderWidth=2.5f;settings.FillMode="none";
+        NumberLabelPreferences.Save(path,settings);saved=NumberLabelPreferences.Load(path);
+        Check(saved.BorderWidth==2.5f&&saved.BorderColorArgb==Color.Red.ToArgb()&&saved.ShowBorder(false)&&!saved.ShowFill(true),"Border and transparent fill round trip");
+        File.WriteAllText(path,"{\"FontName\":\"Arial\",\"FontSize\":17,\"TextColorArgb\":-65536}");saved=NumberLabelPreferences.Load(path);
+        Check(saved.FontSize==17&&saved.TextColorArgb==Color.Red.ToArgb()&&saved.BorderWidth==1&&saved.FillMode=="default","Existing three-field preferences migrate without resetting font");
         settings.FontSize=24; NumberLabelPreferences.Save(path,settings);
         Check(NumberLabelPreferences.Load(path).FontSize==24,"Atomic preference replacement");
         File.WriteAllText(path,"broken json"); Check(NumberLabelPreferences.Load(path).FontSize==18,"Damaged preferences fall back safely");
@@ -178,6 +185,14 @@ internal static class TestSuite
         connect.SetNumberColorHex(null,"#0c62cd");
         Check(saved.OfficeColor==(12|(98<<8)|(205<<16)) && connect.GetNumberColorHex(null)=="0C62CD","Custom color code not applied");
         Check(connect.GetNumberColorImage(null)!=null,"Current color swatch missing");
+        dynamic border=new System.Dynamic.ExpandoObject();border.Id="labNumberBorderColor";
+        dynamic fill=new System.Dynamic.ExpandoObject();fill.Id="labNumberFillColor";
+        connect.SetNumberBoxColorHex(border,"#cc2211");connect.SetNumberBorderWidth(null,"2.75");connect.SetNumberBoxColor(fill,"",3);
+        Check(saved.BorderWidth==2.75f&&saved.BorderMode=="color"&&saved.FillMode=="color"&&saved.FillColorArgb==Color.White.ToArgb(),"Container ribbon callbacks");
+        connect.SetNumberBoxColor(fill,"",1);Check(!saved.ShowFill(true)&&connect.GetNumberBoxColorHex(fill)=="없음","Transparent fill choice");
+        connect.SetNumberBorderWidth(null,"0");Check(!saved.ShowBorder(true),"Zero border width disables border");
+        connect.SetNumberBoxColor(border,"",11);Check(saved.BorderWidth==1&&saved.BorderColorArgb==Color.Red.ToArgb(),"Re-enable border through palette");
+        Check(connect.GetNumberBoxColorImage(fill)!=null&&connect.GetNumberBoxColorCount(fill)==34,"Box palette default/none/color entries");
         Check(connect.GetNumberColorCount(null)==32,"Expected 32 directly selectable colors");
         for(int i=0;i<connect.GetNumberColorCount(null);i++)
         {

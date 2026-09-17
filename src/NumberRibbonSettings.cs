@@ -73,19 +73,35 @@ namespace LabPhotoTools
         public void SetNumberColor(object control, string selectedId, int index) { ChangeNumberSettings(s => s.TextColorArgb = NumberRibbonSettings.Colors[index].ToArgb()); }
         public string GetNumberColorHex(object control) { return NumberRibbonSettings.Hex(readNumberSettings().TextColor); }
         public void SetNumberColorHex(object control, string text) { ChangeNumberSettings(s => s.TextColorArgb = NumberRibbonSettings.ParseColor(text).ToArgb()); }
+        public string GetNumberBorderWidth(object control){return readNumberSettings().BorderWidth.ToString("0.###",CultureInfo.CurrentCulture);}
+        public void SetNumberBorderWidth(object control,string text)
+        {ChangeNumberSettings(s=>{float width;if(!float.TryParse(text,NumberStyles.Float,CultureInfo.CurrentCulture,out width)&&!float.TryParse(text,NumberStyles.Float,CultureInfo.InvariantCulture,out width))throw new ArgumentException("테두리 굵기는 0~20 pt로 입력하세요.");s.BorderWidth=width;s.BorderMode=width==0?"none":"color";s.Validate();});}
+        private static bool BorderControl(object control){return ((string)((dynamic)control).Id).IndexOf("Border",StringComparison.Ordinal)>=0;}
+        public int GetNumberBoxColorCount(object control){return NumberRibbonSettings.Colors.Length+2;}
+        public string GetNumberBoxColorLabel(object control,int index){return index==0?"형식 기본값":index==1?"없음 (투명)":GetNumberColorLabel(control,index-2);}
+        public object GetNumberBoxColorItemImage(object control,int index){return index<2?RibbonIcons.ColorSwatch(index==0?Color.LightGray:Color.Transparent):GetNumberColorItemImage(control,index-2);}
+        public object GetNumberBoxColorImage(object control)
+        {var s=readNumberSettings();bool border=BorderControl(control);string mode=border?s.BorderMode:s.FillMode;return RibbonIcons.ColorSwatch(mode=="none"?Color.Transparent:Color.FromArgb(border?s.BorderColorArgb:s.FillColorArgb));}
+        public string GetNumberBoxColorHex(object control)
+        {var s=readNumberSettings();bool border=BorderControl(control);string mode=border?s.BorderMode:s.FillMode;return mode=="default"?"기본":mode=="none"?"없음":NumberRibbonSettings.Hex(Color.FromArgb(border?s.BorderColorArgb:s.FillColorArgb));}
+        private static void SetBoxColor(NumberLabelSettings s,bool border,string mode,int color)
+        {if(border){s.BorderMode=mode;s.BorderColorArgb=color;if(mode=="color"&&s.BorderWidth==0)s.BorderWidth=1;}else{s.FillMode=mode;s.FillColorArgb=color;}}
+        public void SetNumberBoxColor(object control,string selectedId,int index)
+        {ChangeNumberSettings(s=>SetBoxColor(s,BorderControl(control),index==0?"default":index==1?"none":"color",index<2?(BorderControl(control)?Color.Black:Color.White).ToArgb():NumberRibbonSettings.Colors[index-2].ToArgb()));}
+        public void SetNumberBoxColorHex(object control,string text)
+        {ChangeNumberSettings(s=>{bool border=BorderControl(control);string value=(text??"").Trim();SetBoxColor(s,border,value=="기본"?"default":value=="없음"?"none":"color",value=="기본"||value=="없음"?(border?Color.Black:Color.White).ToArgb():NumberRibbonSettings.ParseColor(value).ToArgb());});}
         private void ChangeNumberSettings(Action<NumberLabelSettings> change)
         {
             try
             {
-                Run(delegate { NumberLabelSettings settings = readNumberSettings().Copy(); change(settings); writeNumberSettings(settings); });
+                Run(delegate { NumberLabelSettings settings = readNumberSettings().Copy(); change(settings); settings.Validate();writeNumberSettings(settings); });
             }
             finally
             {
                 if (ribbonUI != null)
-                    foreach (string id in new[] { "labNumberFont", "labNumberFontSize", "labNumberColor", "labNumberColorHex" })
+                    foreach (string id in new[] { "labNumberFont", "labNumberFontSize", "labNumberColor", "labNumberColorHex", "labNumberBorderColor", "labNumberBorderHex", "labNumberBorderWidth", "labNumberFillColor", "labNumberFillHex" })
                         ((dynamic)ribbonUI).InvalidateControl(id);
             }
         }
     }
 }
-
