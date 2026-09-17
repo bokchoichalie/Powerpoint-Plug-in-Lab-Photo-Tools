@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [string]$SourceDirectory,
     [switch]$PrepareRuntime,
@@ -44,12 +44,24 @@ if (Test-Path -LiteralPath $installDirectory) {
     Write-LabMarker -InstallDirectory $installDirectory
 }
 
-# Copy application files only. Each PC retains its own Python environment and models.
+# Prepare the engine before replacing the add-in DLL. A download failure leaves
+# the previous add-in and its preferences intact and Setup can be run again.
+if ($PrepareRuntime) {
+    $bootstrapParameters = @{ AppDirectory = $installDirectory; EngineDirectory = (Join-Path $sourceRoot 'engine'); DownloadModel = $true }
+    if (-not [string]::IsNullOrWhiteSpace($PythonPath)) { $bootstrapParameters.PythonPath = $PythonPath }
+    & (Join-Path $PSScriptRoot 'Bootstrap-Python.ps1') @bootstrapParameters
+}
+$runtimePython = Join-Path $installDirectory 'runtime\Scripts\python.exe'
+if (-not (Test-Path -LiteralPath $runtimePython -PathType Leaf)) { throw 'The image engine is missing. Run LabPhotoTools-Setup.exe or Install.cmd to prepare it automatically.' }
+& $runtimePython -I -c "import sys,struct; assert sys.version_info[:2] == (3,12); assert struct.calcsize('P') == 8; import PIL, rembg, onnxruntime"
+if ($LASTEXITCODE -ne 0) { throw 'The image engine failed validation. Run Setup again to repair it.' }
+if (-not (Test-Path -LiteralPath (Join-Path $installDirectory 'models\u2netp.onnx') -PathType Leaf)) { throw 'The background model is missing. Run Setup again.' }
+Assert-LabPowerPointClosed
 Copy-Item -LiteralPath $sourceDll -Destination (Join-Path $installDirectory 'LabPhotoTools.dll') -Force
 foreach ($directoryName in @('engine', 'scripts')) {
     $destination = Join-Path $installDirectory $directoryName
     New-Item -Path $destination -ItemType Directory -Force | Out-Null
-    $allowedScripts = @('Common.ps1', 'Install.ps1', 'Uninstall.ps1', 'Bootstrap-Python.ps1', 'Get-Status.ps1')
+    $allowedScripts = @('Common.ps1', 'Install.ps1', 'Uninstall.ps1', 'Bootstrap-Python.ps1', 'Runtime-Downloads.ps1', 'Get-Status.ps1')
     foreach ($file in Get-ChildItem -LiteralPath (Join-Path $sourceRoot $directoryName) -File) {
         if (($directoryName -eq 'engine' -and $file.Extension -in @('.py', '.txt')) -or
             ($directoryName -eq 'scripts' -and $file.Name -in $allowedScripts)) {
@@ -58,21 +70,7 @@ foreach ($directoryName in @('engine', 'scripts')) {
     }
 }
 Copy-Item -LiteralPath (Join-Path $sourceRoot 'README.md') -Destination (Join-Path $installDirectory 'README.md') -Force
-
-if ($PrepareRuntime) {
-    $bootstrapParameters = @{ AppDirectory = $installDirectory; DownloadModel = $true }
-    if (-not [string]::IsNullOrWhiteSpace($PythonPath)) { $bootstrapParameters.PythonPath = $PythonPath }
-    & (Join-Path $installDirectory 'scripts\Bootstrap-Python.ps1') @bootstrapParameters
-}
-$runtimePython = Join-Path $installDirectory 'runtime\Scripts\python.exe'
-if (-not (Test-Path -LiteralPath $runtimePython -PathType Leaf)) {
-    throw 'Python runtime is missing. Run Install.ps1 again with -PrepareRuntime (one-time internet access), optionally with -PythonPath.'
-}
-& $runtimePython -c "import sys,struct; assert sys.version_info[:2] == (3,12); assert struct.calcsize('P') == 8; import PIL, rembg, onnxruntime"
-if ($LASTEXITCODE -ne 0) { throw 'The local Python runtime failed its dependency check. Run again with -PrepareRuntime.' }
-if (-not (Test-Path -LiteralPath (Join-Path $installDirectory 'models\u2netp.onnx') -PathType Leaf)) {
-    throw 'Background model is missing. Run Install.ps1 again with -PrepareRuntime.'
-}
+Copy-Item -LiteralPath (Join-Path $sourceRoot 'Uninstall.cmd') -Destination (Join-Path $installDirectory 'Uninstall.cmd') -Force
 Assert-LabPowerPointClosed
 $installedDll = Join-Path $installDirectory 'LabPhotoTools.dll'
 $codeBase = ([Uri]$installedDll).AbsoluteUri
@@ -126,6 +124,18 @@ foreach ($view in Get-LabRegistryViews) {
     } finally { $hive.Dispose() }
 }
 Write-LabMarker -InstallDirectory $installDirectory
+$uninstall = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Software\Microsoft\Windows\CurrentVersion\Uninstall\LabPhotoTools')
+try {
+    $powershell = Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    $removeScript = Join-Path $installDirectory 'scripts\Uninstall.ps1'
+    $uninstall.SetValue('DisplayName','Lab Photo Tools')
+    $uninstall.SetValue('DisplayVersion',$assemblyIdentity.Version.ToString(3))
+    $uninstall.SetValue('Publisher','Lab Photo Tools')
+    $uninstall.SetValue('InstallLocation',$installDirectory)
+    $uninstall.SetValue('UninstallString',('"'+$powershell+'" -NoProfile -ExecutionPolicy Bypass -NoExit -File "'+$removeScript+'"'))
+    $uninstall.SetValue('QuietUninstallString',('"'+$powershell+'" -NoProfile -ExecutionPolicy Bypass -File "'+$removeScript+'"'))
+    $uninstall.SetValue('NoModify',1,[Microsoft.Win32.RegistryValueKind]::DWord)
+    $uninstall.SetValue('NoRepair',1,[Microsoft.Win32.RegistryValueKind]::DWord)
+} finally { $uninstall.Dispose() }
 Write-Host "Installed for the current Windows user: $installDirectory"
 Write-Host 'Open PowerPoint and select the Lab Photo Tools tab.'
-

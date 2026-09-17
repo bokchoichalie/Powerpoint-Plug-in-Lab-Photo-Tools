@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param([switch]$KeepFiles)
 
 $ErrorActionPreference = 'Stop'
@@ -35,6 +35,11 @@ foreach ($view in Get-LabRegistryViews) {
         $hive.DeleteSubKeyTree("Software\Microsoft\Office\PowerPoint\Addins\$script:LabProgId", $false)
         $hive.DeleteSubKeyTree("Software\Classes\$script:LabProgId", $false)
         $hive.DeleteSubKeyTree("Software\Classes\CLSID\$script:LabClassId", $false)
+        $uninstall = $hive.OpenSubKey('Software\Microsoft\Windows\CurrentVersion\Uninstall\LabPhotoTools')
+        if ($null -ne $uninstall) {
+            try { $owned = $uninstall.GetValue('InstallLocation') -eq $installDirectory } finally { $uninstall.Dispose() }
+            if ($owned) { $hive.DeleteSubKeyTree('Software\Microsoft\Windows\CurrentVersion\Uninstall\LabPhotoTools', $false) }
+        }
     } finally { $hive.Dispose() }
 }
 if (-not $KeepFiles -and (Test-Path -LiteralPath $installDirectory)) {
@@ -45,4 +50,3 @@ if (-not $KeepFiles -and (Test-Path -LiteralPath $installDirectory)) {
 }
 Write-Host 'Lab Photo Tools COM registration was removed for the current user.'
 if ($KeepFiles) { Write-Host "Application files and model were retained at $installDirectory" }
-

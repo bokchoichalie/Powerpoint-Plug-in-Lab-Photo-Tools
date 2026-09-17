@@ -1,82 +1,88 @@
 [CmdletBinding()]
-param(
-    [string]$AppDirectory,
-    [string]$PythonPath,
-    [switch]$DownloadModel,
-    [switch]$CheckOnly
-)
-
+param([string]$AppDirectory, [string]$EngineDirectory, [string]$PythonPath, [switch]$DownloadModel, [switch]$CheckOnly)
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
-# Resolve this after parameter binding so Windows PowerShell 5.1 has a script root.
-if ([string]::IsNullOrWhiteSpace($AppDirectory)) {
-    $AppDirectory = Split-Path -Parent $PSScriptRoot
-}
+if ([string]::IsNullOrWhiteSpace($AppDirectory)) { $AppDirectory = Split-Path -Parent $PSScriptRoot }
 . (Join-Path $PSScriptRoot 'Common.ps1')
-$appRoot = [IO.Path]::GetFullPath($AppDirectory)
+. (Join-Path $PSScriptRoot 'Runtime-Downloads.ps1')
+$appRoot = [IO.Path]::GetFullPath($AppDirectory).TrimEnd('\')
 Assert-LabNoReparsePoint -Path $appRoot
-$requirements = Join-Path $appRoot 'engine\requirements.txt'
-if (Test-Path -LiteralPath (Join-Path $appRoot 'engine\requirements-lock.txt') -PathType Leaf) {
-    $requirements = Join-Path $appRoot 'engine\requirements-lock.txt'
-}
+if ([string]::IsNullOrWhiteSpace($EngineDirectory)) { $EngineDirectory = Join-Path $appRoot 'engine' }
+$engineRoot = [IO.Path]::GetFullPath($EngineDirectory)
+$requirements = Join-Path $engineRoot 'requirements-lock.txt'
 if (-not (Test-Path -LiteralPath $requirements -PathType Leaf)) { throw "Missing $requirements" }
-if ($CheckOnly) {
-    Write-Output "App directory: $appRoot"
-    Write-Output 'Source paths OK. No files, packages, or models were changed.'
-    return
-}
+if (-not [Environment]::Is64BitOperatingSystem) { throw '64-bit Windows is required.' }
+if ($CheckOnly) { Write-Output 'Runtime sources OK. No installed Python is required.'; return }
+New-Item -ItemType Directory -Path $appRoot -Force | Out-Null
 $runtimeDirectory = Join-Path $appRoot 'runtime'
 $runtimePython = Join-Path $runtimeDirectory 'Scripts\python.exe'
 Assert-LabNoReparsePoint -Path $runtimeDirectory
-$probeCode = "import sys,struct; assert sys.version_info[:2] == (3,12), 'Python 3.12 required'; assert struct.calcsize('P') == 8, '64-bit Python required'; print(sys.executable)"
-
-function Find-LabPython {
-    if (-not [string]::IsNullOrWhiteSpace($PythonPath)) {
-        $resolved = (Resolve-Path -LiteralPath $PythonPath).Path
-        $result = @(& $resolved -c $probeCode 2>$null)
-        if ($LASTEXITCODE -ne 0) { throw 'The specified Python must be 64-bit Python 3.12.' }
-        return [string]$result[-1]
+$probeCode = "import sys,struct; assert sys.version_info[:2] == (3,12); assert struct.calcsize('P') == 8; print('Validating Python '+sys.version.split()[0],flush=True); import PIL; print('Pillow OK',flush=True); import onnxruntime; print('ONNX Runtime OK',flush=True); import rembg; print('Image engine imports: OK',flush=True)"
+$ready = $false
+if (Test-Path -LiteralPath $runtimePython -PathType Leaf) {
+    try { & $runtimePython -I -c $probeCode; $ready = $LASTEXITCODE -eq 0 } catch { $ready = $false }
+}
+$stage = Join-Path $appRoot ('.runtime-install-' + [guid]::NewGuid().ToString('N'))
+$backup = $null
+try {
+    if (-not $ready) {
+        if ((Test-Path -LiteralPath $runtimeDirectory) -and -not (Test-Path -LiteralPath (Join-Path $runtimeDirectory 'pyvenv.cfg')) -and -not (Test-Path -LiteralPath (Join-Path $runtimeDirectory '.lab-python.json'))) { throw 'An unrecognized runtime folder exists. It has not been changed.' }
+        New-Item -ItemType Directory -Path $stage -Force | Out-Null
+        Install-LabVisualCpp -CacheDirectory $stage
+        if (-not [string]::IsNullOrWhiteSpace($PythonPath)) {
+            # Explicit developer override; normal setup never searches PATH.
+            & $PythonPath -m venv (Join-Path $stage 'prepared')
+            if ($LASTEXITCODE -ne 0) { throw 'Creating the requested Python environment failed.' }
+            $prepared = Join-Path $stage 'prepared'
+        } else {
+            Write-Host '[1/4] Downloading the private Python runtime (no separate Python installation needed).'
+            $archive = Join-Path $stage 'python.zip'
+            Get-LabDownload -Url $script:LabPythonUrl -Destination $archive -Sha256 $script:LabPythonHash
+            $prepared = Join-Path $stage 'prepared'
+            $scripts = Join-Path $prepared 'Scripts'
+            New-Item -ItemType Directory -Path $scripts,(Join-Path $prepared 'Lib\site-packages'),(Join-Path $prepared 'bootstrap') -Force | Out-Null
+            Add-Type -AssemblyName System.IO.Compression.FileSystem
+            [IO.Compression.ZipFile]::ExtractToDirectory($archive, $scripts)
+            Get-LabDownload -Url $script:LabPipUrl -Destination (Join-Path $prepared 'bootstrap\pip.whl') -Sha256 $script:LabPipHash
+            @('python312.zip','.', '..\Lib\site-packages', '..\bootstrap\pip.whl', '..\..\engine', 'import site') | Set-Content -LiteralPath (Join-Path $scripts 'python312._pth') -Encoding ASCII
+            @{ product='LabPhotoTools'; python='3.12.10'; distribution='python.org-embedded-x64' } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $prepared '.lab-python.json') -Encoding UTF8
+        }
+        $python = Join-Path $prepared 'Scripts\python.exe'
+        Write-Host '[2/4] Installing image libraries. The first installation may take several minutes.'
+        $savedConfig = $env:PIP_CONFIG_FILE
+        try {
+            $env:PIP_CONFIG_FILE = 'NUL'
+            $pipArgs = @('-I','-m','pip','--isolated','install','--disable-pip-version-check','--only-binary=:all:','--no-warn-script-location','--index-url','https://pypi.org/simple','-r',$requirements)
+            if ([string]::IsNullOrWhiteSpace($PythonPath)) { $pipArgs += @('--target',(Join-Path $prepared 'Lib\site-packages')) }
+            & $python @pipArgs
+            if ($LASTEXITCODE -ne 0) { throw 'Downloading image libraries failed. Check the internet connection and run Setup again.' }
+        } finally { $env:PIP_CONFIG_FILE = $savedConfig }
+        & $python -I -X faulthandler -c $probeCode
+        if ($LASTEXITCODE -ne 0) { throw ('The new Python runtime failed validation (exit '+$LASTEXITCODE+'). The previous runtime is unchanged.') }
+        if (Test-Path -LiteralPath $runtimeDirectory) {
+            Assert-LabNoReparsePoint -Path $runtimeDirectory
+            foreach ($item in Get-ChildItem -LiteralPath $runtimeDirectory -Recurse -Force) { if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'The previous runtime contains a junction or symbolic link.' } }
+            $backup = Join-Path $appRoot ('.runtime-backup-' + [guid]::NewGuid().ToString('N'))
+            Move-Item -LiteralPath $runtimeDirectory -Destination $backup
+        }
+        try { Move-Item -LiteralPath $prepared -Destination $runtimeDirectory }
+        catch { if ($backup) { Move-Item -LiteralPath $backup -Destination $runtimeDirectory; $backup=$null }; throw }
+    } else { Write-Host 'Reusing the validated existing image engine.' }
+    if ($DownloadModel) {
+        Write-Host '[3/4] Preparing the background-removal model.'
+        & $runtimePython -I -c "import runpy,sys; sys.path.insert(0,sys.argv[1]); sys.argv=['prepare_model.py','--model-dir',sys.argv[2]]; runpy.run_module('prepare_model',run_name='__main__')" $engineRoot (Join-Path $appRoot 'models')
+        if ($LASTEXITCODE -ne 0) { throw 'The background model could not be prepared. Check the internet connection and run Setup again.' }
     }
-    $launcher = Get-Command 'py.exe' -CommandType Application -ErrorAction SilentlyContinue
-    if ($null -ne $launcher) {
-        foreach ($version in @('-3.12')) {
-            try {
-                $result = @(& $launcher.Source $version -c $probeCode 2>$null)
-                if ($LASTEXITCODE -eq 0 -and $result.Count -gt 0) { return [string]$result[-1] }
-            } catch { }
+    Write-Host '[4/4] Private image engine ready.'
+} finally {
+    # Only remove exact staging/backup folders created by this invocation.
+    foreach ($folder in @($stage,$backup)) {
+        if ($folder -and (Test-Path -LiteralPath $folder)) {
+            $resolved = [IO.Path]::GetFullPath($folder)
+            if ([IO.Path]::GetDirectoryName($resolved) -ne $appRoot -or (Split-Path -Leaf $resolved) -notmatch '^\.runtime-(install|backup)-[0-9a-f]{32}$') { throw 'Unsafe runtime cleanup target.' }
+            Assert-LabNoReparsePoint -Path $resolved
+            foreach ($item in Get-ChildItem -LiteralPath $resolved -Recurse -Force) { if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Unsafe runtime cleanup: reparse point.' } }
+            Remove-Item -LiteralPath $resolved -Recurse -Force
         }
     }
-    $pythonCommand = Get-Command 'python.exe' -CommandType Application -ErrorAction SilentlyContinue
-    if ($null -ne $pythonCommand -and $pythonCommand.Source -notmatch '\\WindowsApps\\') {
-        try {
-            $result = @(& $pythonCommand.Source -c $probeCode 2>$null)
-            if ($LASTEXITCODE -eq 0 -and $result.Count -gt 0) { return [string]$result[-1] }
-        } catch { }
-    }
-    throw 'Install 64-bit Python 3.12 from python.org, or pass -PythonPath C:\path\to\python.exe.'
 }
-
-if (-not (Test-Path -LiteralPath $runtimePython -PathType Leaf)) {
-    if (Test-Path -LiteralPath $runtimeDirectory) {
-        throw 'runtime exists without a working venv. Inspect it and choose a new AppDirectory or repair that environment first.'
-    }
-    $basePython = Find-LabPython
-    Write-Host "Creating a local Python environment at $runtimeDirectory"
-    & $basePython -m venv $runtimeDirectory
-    if ($LASTEXITCODE -ne 0) { throw 'Creating the Python environment failed.' }
-}
-& $runtimePython -c $probeCode
-if ($LASTEXITCODE -ne 0) { throw 'The existing runtime must be a 64-bit Python 3.12 environment.' }
-Write-Host 'Downloading and installing the image engine dependencies (one-time network access).'
-& $runtimePython -m pip install --disable-pip-version-check --only-binary=:all: -r $requirements
-if ($LASTEXITCODE -ne 0) { throw 'Image engine dependency installation failed. COM registration has not been changed by this script.' }
-& $runtimePython -c "import PIL, rembg, onnxruntime; print('Image engine imports: OK')"
-if ($LASTEXITCODE -ne 0) { throw 'Image engine dependency validation failed.' }
-if ($DownloadModel) {
-    & $runtimePython (Join-Path $appRoot 'engine\prepare_model.py') --model-dir (Join-Path $appRoot 'models')
-    if ($LASTEXITCODE -ne 0) { throw 'The background removal model could not be prepared.' }
-} else {
-    Write-Host 'The background model was not downloaded. Run again with -DownloadModel before using background removal.'
-}
-Write-Host 'Local Python environment is ready. Keep the base Python installation in place; venvs are not portable.'
-

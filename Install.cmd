@@ -2,8 +2,9 @@
 setlocal
 title Lab Photo Tools - Install
 echo Lab Photo Tools preview - current-user installation
-echo Close PowerPoint before continuing. Python 3.12 x64 is required.
-echo This setup downloads dependencies and a model once. Photos stay on this PC.
+echo Close PowerPoint before continuing. No separate Python installation is needed.
+echo This setup downloads a private Python runtime, dependencies and model once.
+echo Windows desktop PowerPoint and internet access are required. Photos stay on this PC.
 echo.
 set "LAB_SETUP_MODE=-PrepareRuntime"
 if /i "%~1"=="/check" set "LAB_SETUP_MODE=-CheckOnly"
@@ -21,4 +22,3 @@ if "%LAB_RESULT%"=="0" (
 )
 if /i not "%~1"=="/check" pause
 exit /b %LAB_RESULT%
-

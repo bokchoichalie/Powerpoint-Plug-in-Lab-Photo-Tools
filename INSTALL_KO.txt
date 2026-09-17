@@ -1,15 +1,18 @@
-﻿Lab Photo Tools 0.1.16 설치 및 업데이트
+﻿Lab Photo Tools 0.1.17 설치 및 업데이트
 
 [이미 설치한 PC]
 1. PowerPoint 파일을 저장하고 모든 PowerPoint 창을 닫습니다.
-2. Update.cmd를 더블클릭합니다.
+2. LabPhotoTools-0.1.17-Setup.exe를 실행하고 설치를 누릅니다. ZIP은 Update.cmd도 가능합니다.
 3. PowerPoint를 다시 실행합니다.
 기존 Python 환경과 배경 제거 모델을 재사용합니다.
 
 [처음 설치하는 PC]
-Windows 10/11, .NET Framework 4.8 이상, 64비트 Python 3.12가 필요합니다.
-PowerPoint를 닫고 Install.cmd를 실행합니다.
-최초 패키지와 모델 준비에는 인터넷이 필요합니다.
+Intel/AMD x64 Windows 10/11, .NET Framework 4.8 이상, Windows 데스크톱 PowerPoint가 필요합니다.
+PowerPoint를 닫고 LabPhotoTools-0.1.17-Setup.exe를 실행하여 설치를 누릅니다.
+Python을 따로 설치하지 않아도 됩니다. 압축 해제도 필요하지 않습니다.
+첫 설치 때만 인터넷으로 전용 Python, 라이브러리, 모델을 자동 준비합니다(약 220 MB).
+Microsoft Visual C++ 구성 요소가 없다면 Windows 관리자 승인이 요청될 수 있습니다.
+ZIP을 사용하는 경우 Install.cmd도 같은 자동 준비 과정을 실행합니다.
 설치 위치: %LOCALAPPDATA%\LabPhotoTools
 
 [새 기능]
@@ -31,7 +34,7 @@ PowerPoint를 닫고 Install.cmd를 실행합니다.
 - 알아서 배열: 사진을 선택하면 그 사진만, 선택이 없으면 슬라이드의 사진 전체를 배치.
   4~16장은 정해진 촘촘한 격자를 쓰고, 더 많은 사진은 균형 잡힌 격자로 자동 배치.
   슬라이드 중앙 80% 영역 사용(각 가장자리 최소 10% 여백).
-- 빠른 번호 매기기: 정사각형, 원, (알파벳), 숫자).
+- 빠른 번호 매기기: 정사각형, 원, (알파벳), 숫자), 알파벳).
   라벨 없는 사진을 왼쪽 위부터 찾아 라벨을 사진 왼쪽 위에 붙이고 사진과 그룹화.
   사진에서 라벨만 지우면 다음 번호 매기기에서 그 사진을 다시 인식.
   사진이 없거나 모두 라벨이 붙으면 독립 라벨을 빈 위치에 추가.
@@ -43,6 +46,7 @@ PowerPoint를 닫고 Install.cmd를 실행합니다.
 배치와 번호 추가는 Ctrl+Z로 취소할 수 있습니다.
 
 [제거]
-PowerPoint를 닫고 Uninstall.cmd를 실행합니다.
+PowerPoint를 닫고 Windows 설정의 설치된 앱에서 Lab Photo Tools를 제거합니다.
+또는 설치 폴더의 Uninstall.cmd를 실행할 수 있습니다.
 
 자세한 설명과 검증 범위는 README.md를 참고하세요.

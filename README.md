@@ -1,8 +1,20 @@
-﻿# Lab Photo Tools 0.1.16 — PowerPoint 사진 도구
+﻿# Lab Photo Tools 0.1.17 — PowerPoint 사진 도구
 
 Windows 데스크톱 PowerPoint용 COM 추가 기능입니다. 사진은 로컬 Python 엔진에서 처리합니다.
 
-## 치수측정 (0.1.16)
+## 설치 파일 하나로 설치 (0.1.17)
+
+**[LabPhotoTools-0.1.17-Setup.exe 다운로드](https://github.com/bokchoichalie/Powerpoint-Plug-in-Lab-Photo-Tools/releases/download/v0.1.17/LabPhotoTools-0.1.17-Setup.exe)**
+
+PowerPoint를 닫고 이 EXE를 실행한 다음 **설치**를 누르세요. 압축을 풀거나 Python을 따로 설치할 필요가 없습니다. 처음 한 번 인터넷으로 전용 Python 3.12, 사진 처리 라이브러리, 배경 제거 모델을 자동으로 준비하고 추가 기능을 등록합니다. 다운로드는 약 220 MB, 설치 공간은 약 1 GB이며 기존에 설치한 PC에서는 정상 동작하는 엔진과 설정을 재사용합니다. 설치 후 사진 처리는 오프라인입니다.
+
+- 대상: Intel/AMD x64 Windows 10/11, .NET Framework 4.8 이상, Windows 데스크톱 PowerPoint. 32비트·64비트 PowerPoint 모두 등록합니다. PowerPoint 자체는 포함하지 않습니다. macOS·웹 PowerPoint·ARM64 Windows는 이 설치본의 지원 대상이 아닙니다.
+- Python은 `%LOCALAPPDATA%\LabPhotoTools\runtime`에 전용으로 준비합니다. 새 설치는 기존 Python이나 PATH에 의존하지 않으며 시스템 Python 설정을 변경하지 않습니다. [Python 공식 임베디드 배포판](https://docs.python.org/3.12/using/windows.html#the-embeddable-package)을 사용합니다.
+- Microsoft Visual C++ 런타임이 없으면 Microsoft의 서명을 확인한 설치 프로그램을 실행합니다. 이 단계만 Windows 관리자 승인이 필요할 수 있습니다. 사용자별 추가 기능 등록에는 관리자 권한이 필요하지 않습니다.
+- 오류가 나면 인터넷 연결과 PowerPoint 종료 상태를 확인한 뒤 다시 시도하세요. 설치창에서 로그를 볼 수 있고 `%LOCALAPPDATA%\LabPhotoToolsSetup\logs`에도 남습니다. 시스템의 앱 설치 정책은 변경하지 않습니다.
+- Windows **설정 → 앱 → 설치된 앱 → Lab Photo Tools**에서 제거하거나 설치 폴더의 `Uninstall.cmd`를 사용할 수 있습니다. 제거 전에 PowerPoint를 닫으세요.
+
+## 치수측정 (0.1.17)
 
 PowerPoint 상단 **Lab Photo Tools** 탭 안의 자 모양 **치수측정** 버튼을 사용합니다. 사진 한 장을 선택하고 버튼을 누르면 사진 위에서 직접 측정하는 창이 열립니다. 사진 한 장과 번호 라벨이 묶인 그룹이나 그룹 내부 사진도 선택할 수 있습니다.
 
@@ -78,13 +90,13 @@ Prusacope v19의 수동 측정 동작과 계산을 C#으로 옮겼습니다. 원
 
 ### 빠른 번호 매기기
 
-배치와 도움말 사이의 리본 그룹입니다. 각 형식의 0~10과 다음 값 버튼이 리본에 직접 표시되며 메뉴를 열 필요가 없습니다. 형식별로 3행×4칸에 나누어 놓았습니다. 정사각형과 원은 흰색 채움·검정 숫자·검정 테두리입니다. 알파벳 괄호 형식은 투명한 일반 텍스트 상자입니다.
+배치와 도움말 사이의 리본 그룹입니다. 형식별 프리셋과 다음 값 버튼을 3행×4칸에 나누어 표시합니다. 창이 좁거나 화면 배율이 크면 Office가 그룹을 접을 수 있으며 이때는 ‘빠른 번호 매기기’를 누르면 패널이 열립니다. 기본 서식은 정사각형·원의 흰색 채움/검정 테두리와 괄호 형식의 투명 상자입니다.
 
 정사각형·원·`숫자)`의 ‘11+’는 현재 슬라이드에서 같은 형식의 가장 큰 번호 다음 값을 추가하며 최소 11부터 시작합니다. `(알파벳)`은 `(A)`부터 `(K)`까지 직접 표시하고 ‘L+’로 `(L)`부터 이어집니다. 알파벳은 Z 뒤에 AA, AB 순으로 계속됩니다. 번호 정보는 도형 태그에 저장되어 파일을 다시 열어도 이어지고, 형식마다 독립적으로 계산합니다.
 
 버튼을 누를 때마다 현재 그룹 안에 실제 라벨 도형이 있는지 확인하여 라벨이 없는 사진을 찾습니다. 사진이 행과 열로 배열되어 있으면 왼쪽 위부터 오른쪽으로, 행이 완전히 맞지 않아도 가까운 높이의 사진을 한 행으로 보아 같은 순서로 처리합니다. 라벨은 해당 사진의 정확한 왼쪽 위에 놓이고 사진과 하나의 그룹으로 묶입니다. 라벨만 지운 사진은 남아 있는 내부 태그와 관계없이 다시 라벨 대상이 됩니다. 사진이 없거나 모든 사진에 라벨이 붙어 있으면 라벨은 독립 도형으로 만들어져 기존 라벨과 겹치지 않는 빈 위치에 놓입니다.
 
-### 번호 서식 설정과 정사각형 상자 (0.1.16)
+### 번호 서식 설정과 정사각형 상자 (0.1.17)
 
 1. 빠른 번호 매기기 오른쪽의 **글꼴** 목록에서 글꼴을 바로 선택합니다.
 2. **크기 (pt)**에 숫자를 입력하고 Enter를 누릅니다.
@@ -100,14 +112,14 @@ Prusacope v19의 수동 측정 동작과 계산을 C#으로 옮겼습니다. 원
 ## 이 PC의 기존 설치 업데이트
 
 1. PowerPoint 파일을 저장하고 모든 PowerPoint 창을 닫습니다.
-2. 이 배포 폴더의 **Update.cmd**를 더블클릭합니다.
+2. **LabPhotoTools-0.1.17-Setup.exe**를 실행하고 설치를 누릅니다. ZIP 배포본은 **Update.cmd**도 사용할 수 있습니다.
 3. PowerPoint를 다시 엽니다.
 
 이미 준비된 Python 환경과 모델을 재사용합니다. 설치 위치는 `%LOCALAPPDATA%\LabPhotoTools`입니다. 업데이트 스크립트는 실행 중인 PowerPoint를 강제로 닫지 않습니다.
 
 ## 새 PC에 설치
 
-Windows 10/11, .NET Framework 4.8 이상, 64비트 Python 3.12가 필요합니다. PowerPoint를 닫고 **Install.cmd**를 실행하면 최초 Python 패키지·모델 준비와 사용자별 등록을 수행합니다. 최초 준비에는 인터넷 연결이 필요합니다. 그 이후 사진 처리는 오프라인입니다. 관리자 권한은 필요하지 않습니다.
+위의 단일 EXE 설치 방법을 사용하세요. Python이 없어도 됩니다. ZIP 배포본을 사용할 때도 PowerPoint를 닫고 **Install.cmd**를 실행하면 전용 Python과 모델을 자동 준비합니다. 최초 설치에는 인터넷이 필요합니다.
 
 ## 원본 보존
 
@@ -124,6 +136,8 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-PowerPoin
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-ComBoundary.ps1
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-Measurement.ps1 -PowerPoint
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\Package.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\Build-Setup.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-Setup.ps1
 ```
 
 빌드는 Windows에 포함된 .NET Framework C# 컴파일러를 사용합니다. 별도 .NET SDK는 필요하지 않습니다. 실제 PowerPoint 통합 테스트의 사진 처리에는 프로젝트의 Python 환경 또는 `config.json`에 지정한 기존 설치 환경이 필요합니다. config.json은 배포하지 않습니다.

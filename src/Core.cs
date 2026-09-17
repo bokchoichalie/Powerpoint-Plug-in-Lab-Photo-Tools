@@ -18,7 +18,7 @@ using System.Windows.Forms;
 [assembly: AssemblyTitle("Lab Photo Tools")]
 [assembly: ComVisible(false)]
 [assembly: CompilationRelaxations(8)]
-[assembly: AssemblyVersion("0.1.16.0")]
+[assembly: AssemblyVersion("0.1.17.0")]
 namespace LabPhotoTools
 {
 	[ComVisible(true)]
@@ -97,7 +97,7 @@ namespace LabPhotoTools
 				string text = (dictionary.ContainsKey("pythonPath") ? Convert.ToString(dictionary["pythonPath"]) : Path.Combine(Home, "runtime", "Scripts", "python.exe"));
 				if (!Path.IsPathRooted(text) || !File.Exists(text))
 				{
-					throw new InvalidOperationException("사진 처리 도구가 아직 설치되지 않았습니다. 배포 폴더의 설치 안내에 따라 Python 환경을 준비해 주세요.");
+					throw new InvalidOperationException("사진 처리 도구가 아직 설치되지 않았습니다. Lab Photo Tools 설치 파일을 다시 실행하여 사진 처리 도구를 자동 설치해 주세요.");
 				}
 				return text;
 			}
